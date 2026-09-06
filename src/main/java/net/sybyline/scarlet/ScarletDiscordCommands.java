@@ -2567,12 +2567,21 @@ public class ScarletDiscordCommands
                 .setTitle(MiscUtils.maybeEllipsis(256, MiscUtils.blank(announcement.getTitle()) ? "Group Announcement" : announcement.getTitle()))
                 .setDescription(MiscUtils.blank(announcement.getText()) ? null : MiscUtils.maybeEllipsis(4096, announcement.getText()))
                 .setImage(MiscUtils.blank(announcement.getImageUrl()) ? null : announcement.getImageUrl());
+            if (!MiscUtils.blank(announcement.getVisibility()))
+                builder.addField("Visibility", announcement.getVisibility(), true);
             if (announcement.getCreatedAt() != null)
                 builder.addField("Created", this.when(announcement.getCreatedAt()), true);
             if (announcement.getUpdatedAt() != null)
                 builder.addField("Updated", this.when(announcement.getUpdatedAt()), true);
             if (!MiscUtils.blank(announcement.getAuthorId()))
                 builder.addField("Author", MarkdownUtil.maskedLink(announcement.getAuthorId(), VrcWeb.Home.user(announcement.getAuthorId())), false);
+            // Only surface the editor when it differs from the author, so unedited
+            // announcements do not carry a redundant duplicate field.
+            if (!MiscUtils.blank(announcement.getEditorId())
+             && !announcement.getEditorId().equals(announcement.getAuthorId()))
+                builder.addField("Edited by", MarkdownUtil.maskedLink(announcement.getEditorId(), VrcWeb.Home.user(announcement.getEditorId())), false);
+            if (announcement.getRoleIds() != null && !announcement.getRoleIds().isEmpty())
+                builder.addField("Roles", this.roleNames(announcement.getRoleIds()), false);
             return builder.build();
         }
 
@@ -2590,8 +2599,8 @@ public class ScarletDiscordCommands
                 builder.addField("Updated", this.when(post.getUpdatedAt()), true);
             if (!MiscUtils.blank(post.getAuthorId()))
                 builder.addField("Author", MarkdownUtil.maskedLink(post.getAuthorId(), VrcWeb.Home.user(post.getAuthorId())), false);
-            if (post.getRoleId() != null && !post.getRoleId().isEmpty())
-                builder.addField("Roles", this.roleNames(post.getRoleId()), false);
+            if (post.getRoleIds() != null && !post.getRoleIds().isEmpty())
+                builder.addField("Roles", this.roleNames(post.getRoleIds()), false);
             return builder.build();
         }
 

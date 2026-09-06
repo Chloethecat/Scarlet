@@ -1,6 +1,20 @@
 
 # Changelog
 
+## 0.4.18-b4
+
+A second VRChat API update in quick succession. Unlike the last one this could not be absorbed by a dependency bump alone — VRChat renamed a field Scarlet reads, so this build carries an actual source change.
+
+### Changed
+
+- **Updated `vrchatapi-java` to `1.20.9`** (from `1.20.9-nightly.5`). Upstream renamed `GroupPost.roleId` to `roleIds`, so a build pinned to the old client can no longer read group post roles correctly, and the current client will not compile against the old call. This is the reason the release exists. (For the record, `1.20.9` is the newest tag — the `1.20.9-nightly.N` tags that version-sort after it were all cut *before* it.)
+- **Group announcement embeds now show visibility, targeted roles, and editor.** `GroupAnnouncement` gained `visibility`, `roleIds` and `editorId` in this API version, so announcements now display the same detail group posts already did. The editor is only shown when it differs from the author, so an unedited announcement does not carry a redundant duplicate field. Role IDs resolve to role names where Scarlet has them cached and fall back to the raw ID where it does not.
+
+### Notes
+
+- Upstream also removed `User.username` in this version. Scarlet already used `displayName` throughout and is unaffected — noted only in case anyone building an older fork hits it.
+- Nothing else in Scarlet's API surface was affected. Of the 74 VRChat API types Scarlet references, only `GroupPost` and `User` lost members; every other change was additive.
+
 ## 0.4.18-b3
 
 A VRChat API update forced an early release; alongside it this build adds timed group bans and automatic evidence capture, and fixes a recurring secure-store corruption.

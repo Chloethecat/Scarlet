@@ -1,11 +1,11 @@
 {
   "latest_release": "0.4.18",
-  "latest_build": "0.4.18-b3",
+  "latest_build": "0.4.18-b4",
   "announcement": {
-    "id": "20260810-000000-b3",
+    "id": "20260906-000000-b4",
     "severity": "warning",
-    "title": "0.4.18-b3 — required update (VRChat API change)",
-    "message": "0.4.18-b3 is a required update. VRChat changed its API, and earlier builds no longer track it cleanly — updating keeps VRChat and moderation features working correctly. Aside from that change, this build matches 0.4.18-b2.\n\nSeparately: there has been interest in a locally-hosted web UI for administering Scarlet. Because that would involve credential storage and administrator access, I want it done properly rather than improvised or AI-generated — I'm looking for someone with genuine application-security experience to help design and build it. If that's you and you'd like to contribute, please reach out in the Discord.",
-    "expires": "2026-09-10T00:00:00Z"
+    "title": "0.4.18-b4 — required update (VRChat API change)",
+    "message": "0.4.18-b4 is a required update. VRChat changed its API again, and this time it needed code changes rather than just a dependency bump: a field Scarlet reads on group posts was renamed upstream, so earlier builds cannot display group post roles correctly. Updating keeps VRChat and moderation features working.\n\nAlso in this build: group announcements now show their visibility, the roles they target, and who last edited them — matching what group posts already displayed.\n\nSeparately: there has been interest in a locally-hosted web UI for administering Scarlet. Because that would involve credential storage and administrator access, I want it done properly rather than improvised or AI-generated — I am looking for someone with genuine application-security experience to help design and build it. If that is you and you would like to contribute, please reach out in the Discord.",
+    "expires": "2026-10-06T00:00:00Z"
   }
 }
