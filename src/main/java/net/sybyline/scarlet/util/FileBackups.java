@@ -58,7 +58,8 @@ public final class FileBackups
         if (parent != null && !parent.isDirectory())
             parent.mkdirs();
         File temp = new File(parent, target.getName() + ".tmp");
-        Writer out = new OutputStreamWriter(new FileOutputStream(temp), StandardCharsets.UTF_8);
+        FileOutputStream fos = new FileOutputStream(temp);
+        Writer out = new OutputStreamWriter(fos, StandardCharsets.UTF_8);
         return new FilterWriter(out)
         {
             private boolean closed = false;
@@ -68,6 +69,20 @@ public final class FileBackups
                 if (this.closed)
                     return;
                 this.closed = true;
+                // Force the temp file's bytes to disk BEFORE swapping it into place. Without this
+                // fsync, a hard crash / power loss / BSOD can complete the rename while the data
+                // blocks are still only in the OS cache, leaving a zero-length target -- the
+                // "settings reset themselves after a crash" bug. A failed fsync is not fatal: a
+                // non-durable write still beats no write, matching the plain-move fallback.
+                this.flush();
+                try
+                {
+                    fos.getFD().sync();
+                }
+                catch (IOException syncEx)
+                {
+                    LOG.debug("Could not fsync {} before swap: {}", temp, syncEx.toString());
+                }
                 super.close();
                 commit(temp, target, keep);
             }
@@ -93,6 +108,23 @@ public final class FileBackups
             // Some filesystems (notably certain network mounts) can't do atomic
             // moves; a plain replace is still better than the old direct write.
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+        // Best-effort: fsync the containing directory so the rename itself is durable across a
+        // crash. POSIX only -- Windows can't fsync a directory handle, so failures are ignored.
+        fsyncDir(target.getAbsoluteFile().getParentFile());
+    }
+
+    private static void fsyncDir(File dir)
+    {
+        if (dir == null)
+            return;
+        try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(dir.toPath(), java.nio.file.StandardOpenOption.READ))
+        {
+            ch.force(true);
+        }
+        catch (Exception ignore)
+        {
+            // Directory fsync is unsupported on some platforms (e.g. Windows); ignore.
         }
     }
 
@@ -126,5 +158,20 @@ public final class FileBackups
         for (int i = keep; i < backups.length; i++)
             if (!backups[i].delete())
                 LOG.debug("Could not prune old backup {}", backups[i]);
+    }
+
+    /**
+     * Dated backups for {@code target} (from the sibling {@code backups/} folder), newest first.
+     * The timestamp stamp sorts lexically, so a reverse name sort is newest-first. Empty when none.
+     * Used to recover a file whose primary copy was truncated/emptied by an unclean shutdown.
+     */
+    public static File[] backupsNewestFirst(File target)
+    {
+        File dir = new File(target.getAbsoluteFile().getParentFile(), "backups");
+        File[] backups = dir.listFiles((d, n) -> n.startsWith(target.getName() + ".") && n.endsWith(".bak"));
+        if (backups == null)
+            return new File[0];
+        Arrays.sort(backups, Comparator.comparing(File::getName).reversed());
+        return backups;
     }
 }

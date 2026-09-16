@@ -317,7 +317,7 @@ public class ScarletDiscordCommands
                 .stream()
                 .map($ -> new EmbedBuilder()
                     .setTitle(MiscUtils.maybeEllipsis(256, $.getDisplayName()), VrcWeb.Home.user($.getId()))
-                    .setThumbnail($.getProfilePicOverride() == null || $.getProfilePicOverride().isEmpty() ? ($.getCurrentAvatarImageUrl() == null || $.getCurrentAvatarImageUrl().isEmpty() ? null : $.getCurrentAvatarImageUrl()) : $.getProfilePicOverride())
+                    .setThumbnail($.getIconUrl() == null || $.getIconUrl().isEmpty() ? null : $.getIconUrl())
                     .addField("Report account", MarkdownUtil.maskedLink("link", VRChatHelpDeskURLs.newModerationRequest_account(ScarletDiscordCommands.this.discord.requestingEmail.get(), null, $.getId(), "Account", null)), false)
                     .build())
                 .toArray(MessageEmbed[]::new);
@@ -1788,11 +1788,7 @@ public class ScarletDiscordCommands
                     builder.setTitle(sc == null ? $ : sc.getDisplayName(), VrcWeb.Home.user($));
                     if (sc != null)
                     {
-                        String thumb = sc.getProfilePicOverrideThumbnail();
-                        if (thumb == null || thumb.trim().isEmpty())
-                            thumb = sc.getUserIcon();
-                        if (thumb == null || thumb.trim().isEmpty())
-                            thumb = sc.getCurrentAvatarThumbnailImageUrl();
+                        String thumb = sc.getIconUrl();
                         if (thumb == null || thumb.trim().isEmpty())
                             thumb = null;
                         builder.setThumbnail(thumb);
@@ -2509,13 +2505,8 @@ public class ScarletDiscordCommands
             GroupMemberLimitedUser user = member == null ? null : member.getUser();
             if (user == null)
                 return null;
-            if (!MiscUtils.blank(user.getProfilePicOverride()))
-                return user.getProfilePicOverride();
-            if (!MiscUtils.blank(user.getIconUrl()))
-                return user.getIconUrl();
-            if (!MiscUtils.blank(user.getThumbnailUrl()))
-                return user.getThumbnailUrl();
-            return MiscUtils.blank(user.getCurrentAvatarThumbnailImageUrl()) ? null : user.getCurrentAvatarThumbnailImageUrl();
+            // API 1.21.0: GroupMemberLimitedUser exposes only iconUrl now.
+            return MiscUtils.blank(user.getIconUrl()) ? null : user.getIconUrl();
         }
 
         private String when(OffsetDateTime time)
@@ -5259,7 +5250,8 @@ public class ScarletDiscordCommands
         ScarletDiscordCommands.this.discord.scarlet.exec.execute(() ->
         {
             io.github.vrchatapi.model.User fresh = ScarletDiscordCommands.this.discord.scarlet.vrc.getUserFresh(pending.vrcId);
-            String bio = fresh == null ? null : fresh.getBio();
+            // API 1.21.0 removed bio from User; it now lives on the public profile.
+            String bio = fresh == null ? null : ScarletDiscordCommands.this.discord.scarlet.vrc.getUserBio(pending.vrcId);
             if (bio == null || !bio.contains(pending.code))
             {
                 // Leave the button so they can fix their bio and retry; also offer manual verification.

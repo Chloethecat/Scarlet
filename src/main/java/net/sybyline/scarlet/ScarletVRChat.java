@@ -1767,6 +1767,26 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
         }
     }
 
+    /** API 1.21.0 moved bio off the User object; fetch it from the public profile instead. */
+    public String getUserBio(String userId)
+    {
+        if (userId == null)
+            return null;
+        UsersApi users = new UsersApi(this.client);
+        try
+        {
+            io.github.vrchatapi.model.PublicProfile profile = users.getPublicProfile(userId, null, null);
+            return profile == null ? null : profile.getBio();
+        }
+        catch (ApiException apiex)
+        {
+            this.scarlet.checkVrcRefresh(apiex);
+            if (apiex.getMessage() == null || !apiex.getMessage().contains("HTTP response code: 404"))
+                LOG.error("Error getting public profile bio: "+apiex.getMessage());
+            return null;
+        }
+    }
+
     public List<LimitedWorld> searchWorlds(String name, Integer n, Integer offset)
     {
         WorldsApi worlds = new WorldsApi(this.client);
@@ -1929,6 +1949,41 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
             return InviteResult.FAILED;
         }
     }
+    /**
+     * Fetches the instance's secure join token via the dedicated /shortName endpoint,
+     * which generates the same secureName the client uses on a manual join. Restricted
+     * (group+, age-gated, invite, friends) instances are NOT accepted into a deep link
+     * with only the plain shortName from a general instance fetch, so this endpoint is
+     * what lets the auto-launch actually join them instead of dropping into the error
+     * world. Path is built by hand for the same Cloudflare WAF reason as getInstance
+     * (literal ~group(...) parens).
+     */
+    public String getInstanceSecureName(String worldId, String instanceId)
+    {
+        try
+        {
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put("Accept", "application/json");
+            okhttp3.Call call = this.client.buildCall(null, "/instances/" + worldId + ":" + instanceId + "/shortName", "GET",
+                new java.util.ArrayList<>(), new java.util.ArrayList<>(), null, headers, new java.util.HashMap<>(), new java.util.HashMap<>(), new String[]{"authCookie"}, null);
+            ApiResponse<io.github.vrchatapi.model.InstanceShortNameResponse> resp = this.client.execute(call, io.github.vrchatapi.model.InstanceShortNameResponse.class);
+            io.github.vrchatapi.model.InstanceShortNameResponse data = resp.getData();
+            if (data != null)
+            {
+                if (data.getSecureName() != null && !data.getSecureName().trim().isEmpty())
+                    return data.getSecureName();
+                if (data.getShortName() != null && !data.getShortName().trim().isEmpty())
+                    return data.getShortName();
+            }
+        }
+        catch (ApiException apiex)
+        {
+            this.scarlet.checkVrcRefresh(apiex);
+            LOG.error("Error getting instance secure name for "+worldId+":"+instanceId+": "+apiex.getMessage());
+        }
+        return null;
+    }
+
     public Instance getInstance(String worldId, String instanceId)
     {
         try
@@ -1999,7 +2054,7 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
         GroupsApi groups = new GroupsApi(this.client);
         try
         {
-            group = groups.getGroup(groupId, includeRoles);
+            group = groups.getGroup(groupId, includeRoles, null);
             this.cachedGroups.put(groupId, group);
             return group;
         }
@@ -2029,7 +2084,7 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
     {
         try
         {
-            JsonElement element = this.client.<JsonElement>execute(groups.getGroupCall(groupId, includeRoles, null), JsonElement.class).getData();
+            JsonElement element = this.client.<JsonElement>execute(groups.getGroupCall(groupId, includeRoles, null, null), JsonElement.class).getData();
             JsonObject normalized = this.normalizeGroupPayload(groupId, element);
             if (normalized == null)
                 return null;
@@ -2571,13 +2626,25 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
             List<GroupGalleryImage> images = new ArrayList<>();
             int offset = 0, batchSize = 100;
             List<GroupGalleryImage> ggil;
-            ggil = groups.getGroupGalleryImages(groupId, galleryId, batchSize, offset, approved);
+            {
+                io.github.vrchatapi.model.GetGroupGalleryImages200Response ggResp = groups.getGroupGalleryImages(groupId, galleryId, batchSize, offset, null, approved);
+                Object ggInst = ggResp == null ? null : ggResp.getActualInstance();
+                @SuppressWarnings("unchecked")
+                List<GroupGalleryImage> ggilResolved = ggInst instanceof List ? (List<GroupGalleryImage>) ggInst : null;
+                ggil = ggilResolved;
+            }
             while (ggil != null && !ggil.isEmpty())
             {
                 images.addAll(ggil);
                 offset += ggil.size();
                 MiscUtils.sleep(250L);
-                ggil = groups.getGroupGalleryImages(groupId, galleryId, batchSize, offset, approved);
+                {
+                io.github.vrchatapi.model.GetGroupGalleryImages200Response ggResp = groups.getGroupGalleryImages(groupId, galleryId, batchSize, offset, null, approved);
+                Object ggInst = ggResp == null ? null : ggResp.getActualInstance();
+                @SuppressWarnings("unchecked")
+                List<GroupGalleryImage> ggilResolved = ggInst instanceof List ? (List<GroupGalleryImage>) ggInst : null;
+                ggil = ggilResolved;
+            }
             }
             return images;
         }

@@ -232,15 +232,11 @@ public interface MiscUtils
 
     static String userImageUrl(User user)
     {
-        String picture = user.getProfilePicOverride();
-        if (picture != null && !picture.trim().isEmpty())
-            return picture;
-        String icon = user.getUserIcon();
+        // API 1.21.0 unified user images into a single iconUrl (profilePicOverride / userIcon /
+        // currentAvatarImageUrl were removed from User).
+        String icon = user.getIconUrl();
         if (icon != null && !icon.trim().isEmpty())
             return icon;
-        String avatar = user.getCurrentAvatarImageUrl();
-        if (avatar != null && !avatar.trim().isEmpty())
-            return avatar;
         return "https://vrchat.com/api/1/file/file_0e8c4e32-7444-44ea-ade4-313c010d4bae/1/file"; // robot
     }
 

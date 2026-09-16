@@ -3271,7 +3271,7 @@ public class ScarletUI implements IScarletUI
         int messageType = report.level == VrchatApiVersionChecker.Level.WARNING
             ? JOptionPane.WARNING_MESSAGE
             : JOptionPane.INFORMATION_MESSAGE;
-        JOptionPane.showMessageDialog(this.jframe, message.toString(), I18n.tr("ui.apiStatusDialogTitle"), messageType);
+        JOptionPane.showMessageDialog(this.jframe, Swing.dialogMessage(message.toString()), I18n.tr("ui.apiStatusDialogTitle"), messageType);
     }
 
     private void importWG(boolean isFile)
@@ -3324,6 +3324,12 @@ public class ScarletUI implements IScarletUI
         else
         {
             String url = this.scarlet.settings.requireInput(I18n.tr("ui.urlOfCsvOrJson"), false);
+            if (url == null || url.trim().isEmpty())
+            {
+                // Prompt was cancelled/closed or left blank -- treat it like the file branch does.
+                this.scarlet.splash.queueFeedbackPopup(this.jframe, 3_000L, I18n.tr("ui.opCanceled"), Color.PINK);
+                return;
+            }
             try (Reader reader = new InputStreamReader(HttpURLInputStream.get(url, HttpURLInputStream.PUBLIC_ONLY), StandardCharsets.UTF_8))
             {
                 if (url.contains(".csv"))

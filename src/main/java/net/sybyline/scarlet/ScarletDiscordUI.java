@@ -118,61 +118,89 @@ public class ScarletDiscordUI
     }
 
     @ButtonClk("edit-tags")
-    @Ephemeral
-    public void editTags(ButtonInteractionEvent event, InteractionHook hook)
+    public void editTags(ButtonInteractionEvent event)
     {
         String[] parts = event.getButton().getCustomId().split(":");
         String auditEntryId = parts[1];
-        if (!this.checkAuditEntryModerationAccess(event.getMember(), hook, auditEntryId))
+        if (!this.checkAuditEntryModerationAccess(event.getMember(), event, auditEntryId))
             return;
-                
-        List<ScarletModerationTags.Tag> tags = this.discord.scarlet.moderationTags.getTags();
-        
-        if (tags == null || tags.isEmpty())
+
+        if (this.discord.scarlet.moderationTags.getTags().isEmpty())
         {
-            hook.sendMessage("No moderation tags!").setEphemeral(true).queue();
+            event.reply("No moderation tags!").setEphemeral(true).queue();
             return;
         }
-        
-        int total = tags.size();
-        StringSelectMenu.Builder[] builders = new StringSelectMenu.Builder[(total - 1) / 25 + 1];
-        for (int i = 0; i < builders.length; i++)
+
+        // Search-then-pick: rather than dumping every tag into stacked 25-option
+        // menus (which forces multiple boxes once there are more than 25 tags), pop
+        // a search box. The submit handler renders ONE menu of just the matches, so
+        // any number of tags works and it is the same flow for everyone.
+        event.replyModal(Modal.create("tag-search:" + auditEntryId, "Search moderation tags")
+            .addComponents(Label.of("Search", TextInput.create("tag-search-query", TextInputStyle.SHORT)
+                .setRequired(false)
+                .setPlaceholder("Type a name or description - leave blank to browse")
+                .build()))
+            .build());
+    }
+
+    @ModalSub("tag-search")
+    @Ephemeral
+    public void tagSearch(ModalInteractionEvent event, InteractionHook hook)
+    {
+        String[] parts = event.getModalId().split(":");
+        String auditEntryId = parts[1];
+        if (!this.checkAuditEntryModerationAccess(event.getMember(), event, auditEntryId))
+            return;
+
+        String query = event.getValue("tag-search-query") == null ? "" : event.getValue("tag-search-query").getAsString();
+
+        List<ScarletModerationTags.Tag> matches = this.discord.scarlet.moderationTags.searchTags(query, 25);
+        if (matches.isEmpty())
         {
-            builders[i] = StringSelectMenu.create((i == 0 ? "select-tags:" : ("select-tags-"+i+":")) + auditEntryId);
+            hook.sendMessageFormat("No moderation tags matched `%s` - reopen with the Edit tags button to search again.", query).setEphemeral(true).queue();
+            return;
         }
-        
-        for (int i = 0; i < total; i++)
+
+        StringSelectMenu.Builder menu = StringSelectMenu.create("select-tags-search:" + auditEntryId);
+        for (ScarletModerationTags.Tag tag : matches)
         {
-            ScarletModerationTags.Tag tag = tags.get(i);
             String value = tag.value,
                    label = tag.label != null ? tag.label : tag.value,
                    desc = tag.description;
-            if (desc == null)
-                builders[i / 25].addOption(label, MiscUtils.maybeEllipsis(100, value));
+            if (desc == null || desc.isEmpty())
+                menu.addOption(label, MiscUtils.maybeEllipsis(100, value));
             else
-                builders[i / 25].addOption(label, MiscUtils.maybeEllipsis(100, value), MiscUtils.maybeEllipsis(50, desc));
+                menu.addOption(label, MiscUtils.maybeEllipsis(100, value), MiscUtils.maybeEllipsis(50, desc));
         }
-        for (int i = 0; i < builders.length; i++)
-        {
-            builders[i]
-                .setMinValues(0)
-                .setMaxValues(builders[i].getOptions().size())
-                .setPlaceholder("Select tags ("+(i*25+1)+"-"+(i*25+builders[i].getOptions().size())+")")
-                ;
-        }
-        
+        menu.setMinValues(0).setMaxValues(menu.getOptions().size());
+        String qtrim = query == null ? "" : query.trim();
+        menu.setPlaceholder(qtrim.isEmpty()
+            ? ("Tags (showing " + matches.size() + ")")
+            : MiscUtils.maybeEllipsis(150, "Matches for \"" + qtrim + "\""));
+
+        // Pre-tick the tags already on this entry that appear in the current matches.
         ScarletData.AuditEntryMetadata auditEntryMeta = this.discord.scarlet.data.auditEntryMetadata(auditEntryId);
         if (auditEntryMeta != null && auditEntryMeta.hasTags())
         {
-            for (int i = 0; i < builders.length; i++)
-            {
-                builders[i].setDefaultValues(auditEntryMeta.entryTags.toArray());
-            }
+            List<String> preselect = new ArrayList<>();
+            for (ScarletModerationTags.Tag tag : matches)
+                if (auditEntryMeta.entryTags.contains(tag.value))
+                    preselect.add(tag.value);
+            menu.setDefaultValues(preselect);
         }
-        
-        hook.sendMessageComponents(Arrays.asList(MiscUtils.map(builders, ActionRow[]::new, $ -> ActionRow.of($.build()))))
+
+        hook.sendMessageComponents(Arrays.asList(
+                ActionRow.of(menu.build()),
+                ActionRow.of(Button.secondary("edit-tags:" + auditEntryId, "Search again"))))
             .setEphemeral(true)
             .queue();
+    }
+
+    @StringSel("select-tags-search")
+    @Ephemeral
+    public void selectTagsSearch(StringSelectInteractionEvent event, InteractionHook hook)
+    {
+        this.selectTags_(event, hook);
     }
 
     @StringSel("select-tags")

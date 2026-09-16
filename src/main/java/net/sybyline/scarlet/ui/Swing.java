@@ -966,13 +966,42 @@ public class Swing
             }
         }
         if (allCovered)
-            return message;
+            return fitLongMessage(message, base);
         String html = "<html>" + message
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace("\r\n", "<br>").replace("\n", "<br>") + "</html>";
         JLabel label = new JLabel(html);
         label.setFont(fontForText(message, base));
-        return label;
+        return fitToScreen(label);
+    }
+
+    /**
+     * Plain-text dialog content sizing. Short, few-line messages are returned unchanged (as a
+     * String) so ordinary dialogs keep JOptionPane's native rendering. Long or many-line messages
+     * become a read-only, word-wrapped text area capped to the screen with a scrollbar via
+     * {@link #fitToScreen}, so the auto-generated button row can never be pushed off the bottom
+     * of the screen (the bug where a tall warning hid the Transfer/OK buttons).
+     */
+    private static Object fitLongMessage(String message, Font base)
+    {
+        if (message == null || message.isEmpty())
+            return message;
+        int lines = 1;
+        for (int i = 0; i < message.length(); i++)
+            if (message.charAt(i) == '\n')
+                lines++;
+        if (message.length() < 600 && lines <= 12)
+            return message;
+        javax.swing.JTextArea area = new javax.swing.JTextArea(message);
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setOpaque(false);
+        area.setBorder(null);
+        area.setColumns(52);
+        if (base != null)
+            area.setFont(base);
+        return fitToScreen(area);
     }
 
     public static Font fontForText(String text, Font baseFont)

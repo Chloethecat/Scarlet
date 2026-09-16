@@ -153,6 +153,52 @@ public class ScarletModerationTags
         return new ArrayList<>(this.tags);
     }
 
+    /**
+     * Ranked search across tags by label, value and description, with light typo
+     * tolerance, for the tag picker. Case-insensitive. A blank query returns the
+     * first {@code limit} tags (a plain browse). Never returns more than {@code limit}.
+     */
+    public List<Tag> searchTags(String query, int limit)
+    {
+        List<Tag> all = this.getJson();
+        if (all == null || all.isEmpty())
+            return new ArrayList<>(0);
+        final String q = query == null ? "" : query.trim().toLowerCase();
+        if (q.isEmpty())
+            return new ArrayList<>(all.subList(0, Math.min(limit, all.size())));
+        final int fuzz = Math.max(1, q.length() / 3);
+        final java.util.Map<String, Integer> score = new java.util.HashMap<>();
+        List<Tag> matched = new ArrayList<>();
+        for (Tag tag : all)
+        {
+            String label = tag.label != null ? tag.label.toLowerCase() : "";
+            String value = tag.value != null ? tag.value.toLowerCase() : "";
+            String desc  = tag.description != null ? tag.description.toLowerCase() : "";
+            int sc;
+            if (label.equals(q) || value.equals(q))
+                sc = 0;
+            else if (label.startsWith(q) || value.startsWith(q))
+                sc = 1;
+            else if (label.contains(q) || value.contains(q))
+                sc = 2;
+            else if (desc.contains(q))
+                sc = 3;
+            else if (MiscUtils.levenshtein(q, label) <= fuzz)
+                sc = 4;
+            else
+                continue;
+            score.put(tag.value, sc);
+            matched.add(tag);
+        }
+        matched.sort(java.util.Comparator
+            .<Tag>comparingInt($ -> score.getOrDefault($.value, Integer.MAX_VALUE))
+            .thenComparingInt($ -> MiscUtils.levenshtein(q, $.label != null ? $.label.toLowerCase() : ""))
+            .thenComparing($ -> $.label != null ? $.label : ($.value != null ? $.value : ""), String.CASE_INSENSITIVE_ORDER));
+        if (matched.size() > limit)
+            return new ArrayList<>(matched.subList(0, limit));
+        return matched;
+    }
+
     public List<String> getTagValues()
     {
         List<Tag> tags = this.getJson();

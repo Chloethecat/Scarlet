@@ -4,7 +4,7 @@
   <groupId>net.sybyline</groupId>
   <artifactId>scarlet</artifactId>
   <name>Scarlet</name>
-  <version>0.4.18-b4</version>
+  <version>0.4.19</version>
   <build>
     <plugins>
       <plugin>
@@ -344,7 +344,7 @@
     <scarlet.androidDaveArch>aarch64</scarlet.androidDaveArch>
     <libdave.native.version>0.1.2</libdave.native.version>
     <concentus.version>master-3885c4e465-1</concentus.version>
-    <vrchatapi.version>1.20.9</vrchatapi.version>
+    <vrchatapi.version>1.21.0</vrchatapi.version>
     <scarlet.androidDaveAbi>arm64-v8a</scarlet.androidDaveAbi>
     <scarlet.androidDaveToolchainFile>${scarlet.androidDaveNdk}/build/cmake/android.toolchain.cmake</scarlet.androidDaveToolchainFile>
     <okhttp.version>4.12.0</okhttp.version>

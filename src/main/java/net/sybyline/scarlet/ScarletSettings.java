@@ -298,7 +298,7 @@ public class ScarletSettings
         {
             JOptionPane.showMessageDialog(
                 null,
-                message,
+                net.sybyline.scarlet.ui.Swing.dialogMessage(message),
                 "Back Up KozyBlake/Scarlet Data",
                 JOptionPane.WARNING_MESSAGE);
         }
@@ -922,21 +922,50 @@ public class ScarletSettings
         if (json != null)
             return json;
         if (this.settingsFile.exists())
-        try (Reader r = MiscUtils.reader(this.settingsFile))
         {
-            json = Scarlet.GSON_PRETTY.fromJson(r, JsonObject.class);
+            try (Reader r = MiscUtils.reader(this.settingsFile))
+            {
+                json = Scarlet.GSON_PRETTY.fromJson(r, JsonObject.class);
+            }
+            catch (Exception ex)
+            {
+                LOG.error("Exception loading settings", ex);
+                json = null;
+            }
+            // The file exists but came back empty / whitespace / literal-null (Gson returns null
+            // without throwing) or unparseable (throws) -- i.e. truncated or corrupt, which after a
+            // hard crash / power loss / BSOD is exactly how settings appear to "reset". Before
+            // falling back to a blank config, recover the newest parseable dated backup so the
+            // team's UI and configuration survive an unclean shutdown.
+            if (json == null)
+                json = loadNewestGoodBackup();
         }
-        catch (Exception ex)
-        {
-            LOG.error("Exception loading settings", ex);
+        // Missing file (fresh install or a deliberate reset) -- or no usable backup -- starts blank.
+        if (json == null)
             json = new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
         this.json = json;
         return json;
+    }
+
+    private JsonObject loadNewestGoodBackup()
+    {
+        for (File bak : FileBackups.backupsNewestFirst(this.settingsFile))
+        {
+            try (Reader r = MiscUtils.reader(bak))
+            {
+                JsonObject recovered = Scarlet.GSON_PRETTY.fromJson(r, JsonObject.class);
+                if (recovered != null && recovered.size() > 0)
+                {
+                    LOG.warn("settings.json was empty or corrupt (likely an unclean shutdown); recovered {} setting(s) from backup {}", recovered.size(), bak.getName());
+                    return recovered;
+                }
+            }
+            catch (Exception ex)
+            {
+                LOG.debug("Settings backup {} not usable: {}", bak, ex.toString());
+            }
+        }
+        return null;
     }
 
     public synchronized void saveJson()
@@ -1055,8 +1084,12 @@ public class ScarletSettings
                     cpm.add("Paste").addActionListener($ -> Optional.ofNullable(MiscUtils.AWTToolkit.get()).ifPresent(jpf::setText));
                     jpf.setComponentPopupMenu(cpm);
                 int res = JOptionPane.showConfirmDialog(null, jpf, display, JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-                if (res == JOptionPane.OK_OPTION)
-                    return new String(jpf.getPassword());
+                // Cancelling/closing the dialog returns null. It must NOT fall through to the console
+                // fallback below: on a GUI (X11/Windows) launch there is usually no attached console,
+                // so that read blocks forever on the EDT and freezes the entire UI (the "cancel the
+                // import-groups URL prompt and nothing is clickable" bug). Console input is for
+                // genuinely headless runs only.
+                return res == JOptionPane.OK_OPTION ? new String(jpf.getPassword()) : null;
             }
             else
             {
@@ -1064,8 +1097,7 @@ public class ScarletSettings
                     cpm.add("Paste").addActionListener($ -> Optional.ofNullable(MiscUtils.AWTToolkit.get()).ifPresent(jtf::setText));
                     jtf.setComponentPopupMenu(cpm);
                 int res = JOptionPane.showConfirmDialog(null, jtf, display, JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
-                if (res == JOptionPane.OK_OPTION)
-                    return jtf.getText();
+                return res == JOptionPane.OK_OPTION ? jtf.getText() : null;
             }
         }
         return requireConsoleInput(display, sensitive);

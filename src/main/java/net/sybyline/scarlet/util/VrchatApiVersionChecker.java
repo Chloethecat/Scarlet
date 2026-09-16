@@ -79,7 +79,7 @@ public final class VrchatApiVersionChecker
     {
         String bundledVersion = detectBundledVersion();
         if (MiscUtils.blank(bundledVersion))
-            bundledVersion = "1.20.9";
+            bundledVersion = "1.21.0";
         String latestVersion = bundledVersion + ".test";
         return new Report(Level.WARNING, bundledVersion, latestVersion, true,
             "Scarlet bundles VRChat API " + bundledVersion + ", but upstream now has " + latestVersion + ".",
@@ -135,8 +135,8 @@ public final class VrchatApiVersionChecker
      * Normalizes a version tag for comparison: strips a leading {@code v} and any SemVer
      * {@code +build} metadata (which, per spec, doesn't affect precedence). Keeps the rest
      * — {@code major.minor.patch} plus a {@code -channel.N} suffix with {@code . - _}
-     * separators — intact, so a scheme like {@code v1.20.9-nightly+20} still parses and
-     * compares by its {@code 1.20.9} core.
+     * separators — intact, so a scheme like {@code v1.21.0-nightly+20} still parses and
+     * compares by its {@code 1.21.0} core.
      */
     static String normalizeVersion(String v)
     {

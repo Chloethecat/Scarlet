@@ -334,7 +334,8 @@ public class Scarlet implements Closeable
         File dir0;
         File legacyDir0 = null;
         DataFolderMigrationResult migration0 = DataFolderMigrationResult.notNeeded();
-        if (scarletHome != null && !scarletHome.trim().isEmpty() && !";".equals(scarletHome.trim()))
+        boolean explicitHome = scarletHome != null && !scarletHome.trim().isEmpty() && !";".equals(scarletHome.trim());
+        if (explicitHome)
         {
             // SCARLET_HOME is explicitly set
             dir0 = new File(scarletHome).getAbsoluteFile();
@@ -351,6 +352,23 @@ public class Scarlet implements Closeable
             migration0 = copyLegacyDataDir(legacyDir0, dir0);
         }
 
+        // Data-folder auto-discovery: if the resolved folder has no usable settings.json but a
+        // real config exists in another known data location (an older default, the legacy-group
+        // folder, an old Windows-style path, or the jar dir), adopt THAT folder instead of
+        // silently booting a blank config. This is what makes Scarlet "find what works" when the
+        // data dir has drifted between versions or launchers. An explicit SCARLET_HOME path is
+        // always respected and never overridden. Fully guarded so a bad candidate cannot break
+        // static initialisation.
+        if (!explicitHome && !settingsFileUsable(dir0))
+        {
+            File discovered = findUsableDataDir(dir0, localappdata, xdgDataHome);
+            if (discovered != null && !discovered.equals(dir0))
+            {
+                System.out.println("[Scarlet] Data folder " + dir0 + " has no usable settings.json; using discovered config at " + discovered);
+                dir0 = discovered;
+            }
+        }
+
         if (!dir0.isDirectory())
         {
             if (!dir0.mkdirs())
@@ -361,6 +379,7 @@ public class Scarlet implements Closeable
         dir = dir0;
         LEGACY_DIR = legacyDir0;
         DATA_FOLDER_MIGRATION = migration0;
+        System.out.println("[Scarlet] Data folder resolved to: " + dir0.getAbsolutePath());
     }
 
     static File defaultDataDir(String group, String name, String localappdata, String xdgDataHome)
@@ -376,6 +395,72 @@ public class Scarlet implements Closeable
         if (Platform.CURRENT == Platform.NT)
             return new File(user_home, "AppData/Local/"+group+"/"+name);
         return new File(user_home, "."+group+"/"+name);
+    }
+
+    /**
+     * True when {@code dir/settings.json} exists and parses to a non-empty JSON object, i.e. it
+     * holds a real, loadable config (not missing, not empty, not corrupt). Used by data-folder
+     * auto-discovery. Never throws. Uses JsonParser directly so it is independent of static field
+     * init order.
+     */
+    static boolean settingsFileUsable(File dir)
+    {
+        if (dir == null)
+            return false;
+        File f = new File(dir, "settings.json");
+        if (!f.isFile() || f.length() <= 0L)
+            return false;
+        try (java.io.Reader r = new java.io.InputStreamReader(new java.io.FileInputStream(f), java.nio.charset.StandardCharsets.UTF_8))
+        {
+            com.google.gson.JsonElement el = com.google.gson.JsonParser.parseReader(r);
+            return el != null && el.isJsonObject() && el.getAsJsonObject().size() > 0;
+        }
+        catch (Exception ex)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Scans the known Scarlet data locations (the current group, every platform-native
+     * variant, and the jar directory) for the first one holding a usable settings.json, so a
+     * config that ended up in a different folder than the one currently resolved still gets used.
+     * Returns null if none is found. Never throws.
+     */
+    static File findUsableDataDir(File primary, String localappdata, String xdgDataHome)
+    {
+        try
+        {
+            java.util.List<File> candidates = new java.util.ArrayList<>();
+            // Current group only: the legacy group is handled by the consent-gated migration
+            // prompt (copyLegacyDataDir), so silent discovery must not override a "Start fresh"
+            // choice by re-adopting the legacy folder. Discovery's job is same-group drift
+            // (e.g. an old Windows-style path used on Linux by earlier builds).
+            for (String g : new String[] { GROUP })
+            {
+                if (xdgDataHome != null && !xdgDataHome.trim().isEmpty())
+                    candidates.add(new File(xdgDataHome, g+"/"+NAME));
+                candidates.add(new File(user_home, ".local/share/"+g+"/"+NAME));
+                if (localappdata != null)
+                    candidates.add(new File(localappdata, g+"/"+NAME));
+                candidates.add(new File(user_home, "AppData/Local/"+g+"/"+NAME));
+                candidates.add(new File(user_home, "."+g+"/"+NAME));
+            }
+            try
+            {
+                if (MavenDepsLoader.jarPath() != null)
+                    candidates.add(MavenDepsLoader.jarPath().getParent().toFile());
+            }
+            catch (Exception ignore) {}
+            for (File c : candidates)
+                if (c != null && !c.equals(primary) && settingsFileUsable(c))
+                    return c;
+        }
+        catch (Exception ex)
+        {
+            System.err.println("[Scarlet] Data folder discovery failed: " + ex);
+        }
+        return null;
     }
 
     static String legacyGroupName()
@@ -435,7 +520,7 @@ public class Scarlet implements Closeable
             Object[] options = { "Transfer data", "Start fresh" };
             int result = JOptionPane.showOptionDialog(
                 null,
-                message,
+                Swing.dialogMessage(message),
                 "Transfer Data to KozyBlake/Scarlet?",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE,
@@ -488,7 +573,7 @@ public class Scarlet implements Closeable
             "Startup will continue using the KozyBlake/Scarlet folder.";
         if (!GraphicsEnvironment.isHeadless())
         {
-            JOptionPane.showMessageDialog(null, message, "KozyBlake/Scarlet Data Transfer Failed", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(null, Swing.dialogMessage(message), "KozyBlake/Scarlet Data Transfer Failed", JOptionPane.WARNING_MESSAGE);
         }
         else
         {
@@ -866,8 +951,8 @@ public class Scarlet implements Closeable
             return;
         }
         String userDisplayName = MarkdownSanitizer.escape(user.getDisplayName()),
-               userIcon = MiscUtils.nonBlankOrNull(user.getUserIcon()),
-               userThumbnail = MiscUtils.nonBlankOrNull(user.getProfilePicOverride(), user.getCurrentAvatarImageUrl());
+               userIcon = MiscUtils.nonBlankOrNull(user.getIconUrl()),
+               userThumbnail = MiscUtils.nonBlankOrNull(user.getIconUrl());
         embed.setAuthor(userDisplayName, "https://vrchat.com/home/user/"+id, userIcon);
         if (userThumbnail != null)
         {
@@ -884,7 +969,7 @@ public class Scarlet implements Closeable
         embed.setTitle(MarkdownSanitizer.escape(avatar.getName()), "https://vrchat.com/home/avatar/"+id);
         User author = this.vrc.getUser(avatar.getAuthorId());
         String authorName = MarkdownSanitizer.escape(author != null ? author.getDisplayName() : avatar.getAuthorName()),
-               authorIcon = author != null && !MiscUtils.blank(author.getUserIcon()) ? author.getUserIcon() : null;
+               authorIcon = author != null && !MiscUtils.blank(author.getIconUrl()) ? author.getIconUrl() : null;
         embed.setAuthor(authorName, "https://vrchat.com/home/user/"+avatar.getAuthorId(), authorIcon);
         if (!MiscUtils.blank(avatar.getThumbnailImageUrl()))
         {
@@ -2477,7 +2562,7 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
                 text.append("\n\nIf this is causing problems, please open a ticket in the KozyBlake/Scarlet Discord server and ping BlakeBelladonna or Vinyarion.");
                 int choice = JOptionPane.showOptionDialog(
                     this.ui.getParentComponent(),
-                    text.toString(),
+                    Swing.dialogMessage(text.toString()),
                     "VRChat API Update Available",
                     JOptionPane.DEFAULT_OPTION,
                     JOptionPane.WARNING_MESSAGE,
@@ -2493,7 +2578,7 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
             }
             JOptionPane.showMessageDialog(
                 this.ui.getParentComponent(),
-                text.toString(),
+                Swing.dialogMessage(text.toString()),
                 "VRChat API Status",
                 JOptionPane.WARNING_MESSAGE
             );

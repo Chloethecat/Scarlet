@@ -550,9 +550,8 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
      */
     static boolean hasProfileImageOverride(User user)
     {
-        return notBlank(user.getProfilePicOverride())
-            || notBlank(user.getProfilePicOverrideThumbnail())
-            || notBlank(user.getUserIcon());
+        // API 1.21.0 collapsed profilePicOverride/profilePicOverrideThumbnail/userIcon into iconUrl.
+        return notBlank(user.getIconUrl());
     }
     private static boolean notBlank(String s)
     {
@@ -568,7 +567,10 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
     {
         if (user == null || hasProfileImageOverride(user))
             return null;
-        String url = user.getCurrentAvatarImageUrl();
+        // VRChat API 1.21.0 removed currentAvatarImageUrl from the User object, so the worn
+        // avatar's image URL is no longer exposed here. Avatar-image matching from a User can
+        // no longer read it; this degrades to null (matching disabled) rather than guessing.
+        String url = null;
         if (url == null || url.contains(DEFAULT_AVATAR_IMAGE_FILE))
             return null;
         Matcher m = VrcIds.id_file.matcher(url);

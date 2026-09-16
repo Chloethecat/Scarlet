@@ -379,7 +379,7 @@ public class DaveLibraryLoader
                     "Would you like to install it now?\n\nCommand: %s",
                     missingLib, distro.name, packageName, installCommand);
                 String[] opts = {"Install", "Open Download Page", "Manual Instructions", "Cancel"};
-                switch (JOptionPane.showOptionDialog(null, msg, "Missing Dependency - " + missingLib,
+                switch (JOptionPane.showOptionDialog(null, net.sybyline.scarlet.ui.Swing.dialogMessage(msg), "Missing Dependency - " + missingLib,
                     JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, opts, opts[0]))
                 {
                     case 0: result.set(runInstallCommand(installCommand)); break;

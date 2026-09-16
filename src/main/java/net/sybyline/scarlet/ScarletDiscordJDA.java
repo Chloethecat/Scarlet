@@ -2808,19 +2808,26 @@ public class ScarletDiscordJDA implements ScarletDiscord
                     Location locModel = Location.of(location);
                     if (locModel != null && locModel.world != null && locModel.instance != null)
                     {
-                        io.github.vrchatapi.model.Instance inst = this.scarlet.vrc.getInstance(locModel.world, locModel.instance);
-                        if (inst != null)
+                        // The dedicated /shortName endpoint generates the secure join token the
+                        // client uses on a manual join; restricted (group+/age-gated) instances
+                        // are rejected into the error world with only the plain shortName.
+                        shortName = this.scarlet.vrc.getInstanceSecureName(locModel.world, locModel.instance);
+                        if (shortName == null)
                         {
-                            if (inst.getShortName() != null && !inst.getShortName().trim().isEmpty())
-                                shortName = inst.getShortName();
-                            else if (inst.getSecureName() != null && !inst.getSecureName().trim().isEmpty())
-                                shortName = inst.getSecureName();
+                            io.github.vrchatapi.model.Instance inst = this.scarlet.vrc.getInstance(locModel.world, locModel.instance);
+                            if (inst != null)
+                            {
+                                if (inst.getSecureName() != null && !inst.getSecureName().trim().isEmpty())
+                                    shortName = inst.getSecureName();
+                                else if (inst.getShortName() != null && !inst.getShortName().trim().isEmpty())
+                                    shortName = inst.getShortName();
+                            }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    LOG.warn("Could not resolve instance short name for auto-launch of {}: {}", location, ex.getMessage());
+                    LOG.warn("Could not resolve instance secure name for auto-launch of {}: {}", location, ex.getMessage());
                 }
                 VrcLaunch.launch(this.scarlet.vrc.currentUserId, location, shortName, VrcLaunch.LaunchMode.DESKTOP);
             }
@@ -3180,7 +3187,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
                     .setTimestamp(OffsetDateTime.now(ZoneOffset.UTC))
             ;
             User user = this.scarlet.vrc.getUser(userId);
-            String aviThumbnail = user == null ? null : user.getCurrentAvatarThumbnailImageUrl();
+            String aviThumbnail = user == null ? null : user.getIconUrl();
             if (aviThumbnail != null && !aviThumbnail.isEmpty())
                 builder.setThumbnail(aviThumbnail);
             VersionedFile versionedFile = this.avatarName2Bundle.get(avatarDisplayName);
