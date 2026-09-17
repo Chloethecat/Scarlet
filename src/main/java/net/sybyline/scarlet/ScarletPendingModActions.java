@@ -225,7 +225,7 @@ public class ScarletPendingModActions
         spec.pendingModActions = new HashMap<>(this.pendingModActions);
         spec.pendingBanInfo = new HashMap<>(this.pendingBanInfo);
         spec.timedBans = new HashMap<>(this.timedBans);
-        try (Writer w = MiscUtils.writer(this.pendingModActionsFile))
+        try (Writer w = net.sybyline.scarlet.util.FileBackups.writer(this.pendingModActionsFile))
         {
             Scarlet.GSON_PRETTY.toJson(spec, DataSpec.class, w);
         }

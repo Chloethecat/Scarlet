@@ -38,7 +38,7 @@ public interface Gifs
             int contentLength = in.connection().getContentLength();
             if (contentLength > MAX_GIF_BYTES)
                 throw new IOException("GIF exceeds maximum allowed size");
-            bytes = MiscUtils.readAllBytes(in);
+            bytes = MiscUtils.readAllBytes(in, MAX_GIF_BYTES);
             if (bytes.length > MAX_GIF_BYTES)
                 throw new IOException("GIF exceeds maximum allowed size");
         }

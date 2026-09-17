@@ -115,6 +115,7 @@ public class ScarletModerationTags
                 old.label = label;
             if (description != null)
                 old.description = description;
+            this.choicesCache = null;
             this.saveJson();
             return 1;
         }

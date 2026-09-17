@@ -2,27 +2,29 @@ package net.sybyline.scarlet.ext;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.util.Objects;
 
 import net.sybyline.scarlet.ext.AvatarSearch.VrcxAvatar;
 import net.sybyline.scarlet.util.HttpURLInputStream;
+import net.sybyline.scarlet.util.URLs;
 
 public interface AvatarSearch_AvatarSearch_CC
 {
     static VrcxAvatar[] searchNamePC(String name)
     {
-        return list("https://avatarsearch.cc/Avatar/NewAvatarSearcher?name="+name);
+        return list("https://avatarsearch.cc/Avatar/NewAvatarSearcher?name="+URLs.encode(name));
     }
     static VrcxAvatar[] searchNameQuest(String name)
     {
-        return list("https://avatarsearch.cc/Avatar/NewQuestAvatarSearcher?name="+name);
+        return list("https://avatarsearch.cc/Avatar/NewQuestAvatarSearcher?name="+URLs.encode(name));
     }
     static VrcxAvatar[] searchAuthorPC(String name)
     {
-        return list("https://avatarsearch.cc/Avatar/NewAuthorSearcher?authorName=test"+name);
+        return list("https://avatarsearch.cc/Avatar/NewAuthorSearcher?authorName="+URLs.encode(name));
     }
     static VrcxAvatar[] searchAuthorQuest(String name)
     {
-        return list("https://avatarsearch.cc/Avatar/NewQuestAuthorSearcher?authorName=test"+name);
+        return list("https://avatarsearch.cc/Avatar/NewQuestAuthorSearcher?authorName="+URLs.encode(name));
     }
     static VrcxAvatar[] listRecentlyLogged()
     {
@@ -40,7 +42,8 @@ public interface AvatarSearch_AvatarSearch_CC
     {
         try (BufferedReader in = new BufferedReader(new InputStreamReader(HttpURLInputStream.get(url, ExtendedUserAgent.init_conn))))
         {
-            return in.lines().map(AvatarSearch_AvatarSearch_CC::parse).toArray(VrcxAvatar[]::new);
+            // Skip malformed/blank lines rather than letting one bad row throw and discard the whole result set.
+            return in.lines().map(AvatarSearch_AvatarSearch_CC::parse).filter(Objects::nonNull).toArray(VrcxAvatar[]::new);
         }
         catch (Exception ex)
         {
@@ -50,12 +53,16 @@ public interface AvatarSearch_AvatarSearch_CC
     }
     static VrcxAvatar parse(String line)
     {
-        VrcxAvatar ret = new VrcxAvatar();
+        if (line == null)
+            return null;
         String[] linea = line.split("\\|", 4);
-        ret.id = linea[0];
-        ret.name = linea[1];
-        ret.authorName = linea[2];
-        ret.description = linea[3];
+        if (linea.length < 2 || linea[0].isEmpty())
+            return null;
+        VrcxAvatar ret = new VrcxAvatar();
+        ret.id          = linea[0];
+        ret.name        = linea[1];
+        ret.authorName  = linea.length > 2 ? linea[2] : "";
+        ret.description = linea.length > 3 ? linea[3] : "";
         return ret;
     }
 }

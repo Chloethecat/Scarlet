@@ -348,7 +348,7 @@ class SettingsGUI implements Settings
         @Override
         public void loadValue(JsonElement savedValue)
         {
-            if (savedValue == null || !savedValue.isJsonPrimitive() && !savedValue.getAsJsonPrimitive().isString())
+            if (savedValue == null || !savedValue.isJsonPrimitive() || !savedValue.getAsJsonPrimitive().isString())
                 return;
             this.setImpl(savedValue.getAsString(), true);
         }
@@ -435,7 +435,7 @@ class SettingsGUI implements Settings
         @Override
         public void loadValue(JsonElement savedValue)
         {
-            if (savedValue == null || !savedValue.isJsonPrimitive() && !savedValue.getAsJsonPrimitive().isBoolean())
+            if (savedValue == null || !savedValue.isJsonPrimitive() || !savedValue.getAsJsonPrimitive().isBoolean())
                 return;
             this.setImpl(savedValue.getAsBoolean(), true);
         }
@@ -449,7 +449,7 @@ class SettingsGUI implements Settings
         void updateGUI(Boolean oldValue, Boolean newValue)
         {
             if (this.checkBox != null)
-                this.checkBox.setEnabled(newValue);
+                this.checkBox.setSelected(newValue);
         }
         @Override
         public Component createGUI()

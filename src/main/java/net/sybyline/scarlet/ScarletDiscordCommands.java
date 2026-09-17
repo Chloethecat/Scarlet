@@ -1788,7 +1788,7 @@ public class ScarletDiscordCommands
                     builder.setTitle(sc == null ? $ : sc.getDisplayName(), VrcWeb.Home.user($));
                     if (sc != null)
                     {
-                        String thumb = sc.getIconUrl();
+                        String thumb = ScarletDiscordCommands.this.discord.scarlet.vrc.getUserImageUrlOrNull(sc.getId());
                         if (thumb == null || thumb.trim().isEmpty())
                             thumb = null;
                         builder.setThumbnail(thumb);
@@ -2215,16 +2215,21 @@ public class ScarletDiscordCommands
             if (tags == null || tags.isEmpty())
             {
                 hook.sendMessage("No moderation tags!").setEphemeral(true).queue();
+                return;
             }
             StringSelectMenu.Builder builder = StringSelectMenu
                 .create("immediate-ban-select-tags:"+vrcTargetId)
                 .setMinValues(0)
-                .setMaxValues(tags.size())
-                .setPlaceholder("Select tags")
+                .setMaxValues(Math.min(25, tags.size()))
+                .setPlaceholder(tags.size() > 25 ? "Select tags (first 25 shown)" : "Select tags")
                 ;
             
+            // Discord select menus allow at most 25 options; cap here (Edit-tags has search for the full set).
+            int addedTags = 0;
             for (ScarletModerationTags.Tag tag : tags)
             {
+                if (addedTags++ >= 25)
+                    break;
                 String value = tag.value,
                        label = tag.label != null ? tag.label : tag.value,
                        desc = tag.description;
@@ -2287,7 +2292,7 @@ public class ScarletDiscordCommands
         event.replyModal(Modal.create("vrchat-user-ban-multi", "Ban Multiple VRChat Users")
             .addComponents(Label.of("Target VRChat User IDs", TextInput.create("target-ids", TextInputStyle.PARAGRAPH)
                 .setPlaceholder("User IDs separated by something that isn't 0-9, a-z, A-Z, '-', or '_' (e.g., newline, space, comma)")
-                .setRequiredRange(10, -1)
+                .setRequiredRange(10, 4000)
                 .build()))
             .build())
         .queue();
@@ -2379,7 +2384,7 @@ public class ScarletDiscordCommands
         event.replyModal(Modal.create("vrchat-user-unban-multi", "Unban Multiple VRChat Users")
             .addComponents(Label.of("Target VRChat User IDs", TextInput.create("target-ids", TextInputStyle.PARAGRAPH)
                 .setPlaceholder("User IDs separated by something that isn't 0-9, a-z, A-Z, '-', or '_' (e.g., newline, space, comma)")
-                .setRequiredRange(10, -1)
+                .setRequiredRange(10, 4000)
                 .build()))
             .build())
         .queue();
@@ -2792,6 +2797,11 @@ public class ScarletDiscordCommands
         @Desc("Checks whether a user can receive group ownership")
         public void transferCheck(SlashCommandInteractionEvent event, InteractionHook hook, @SlashOpt("vrchat-user") io.github.vrchatapi.model.User vrchatUser)
         {
+            if (vrchatUser == null)
+            {
+                hook.sendMessage("No VRChat user found for that input.").setEphemeral(true).queue();
+                return;
+            }
             if (!this.checkMemberAndSelfPerms(event, hook, GroupPermissions.group_all, "check group transfer eligibility"))
                 return;
             GroupTransferable transferable = ScarletDiscordCommands.this.discord.scarlet.vrc.getGroupTransferability(ScarletDiscordCommands.this.discord.scarlet.vrc.groupId, vrchatUser.getId());
@@ -2821,6 +2831,11 @@ public class ScarletDiscordCommands
         @Desc("Starts or accepts group ownership transfer")
         public void transferStart(SlashCommandInteractionEvent event, InteractionHook hook, @SlashOpt("vrchat-user") io.github.vrchatapi.model.User vrchatUser, @SlashOpt("confirm-group-id") String confirmGroupId)
         {
+            if (vrchatUser == null)
+            {
+                hook.sendMessage("No VRChat user found for that input.").setEphemeral(true).queue();
+                return;
+            }
             String groupId = ScarletDiscordCommands.this.discord.scarlet.vrc.groupId;
             if (!Objects.equals(groupId, confirmGroupId))
             {
@@ -2948,6 +2963,11 @@ public class ScarletDiscordCommands
         @Desc("Adds a VRChat Group Role")
         public void addRole(SlashCommandInteractionEvent event, InteractionHook hook, @SlashOpt("vrchat-user") io.github.vrchatapi.model.User vrchatUser, @SlashOpt("vrchat-role") io.github.vrchatapi.model.GroupRole vrchatRole) throws Exception
         {
+            if (vrchatUser == null)
+            {
+                hook.sendMessage("No VRChat user found for that input.").setEphemeral(true).queue();
+                return;
+            }
             GroupMember glm = ScarletDiscordCommands.this.discord.scarlet.vrc.getGroupMembership(ScarletDiscordCommands.this.discord.scarlet.vrc.groupId, vrchatUser.getId());
             if (glm != null)
             {
@@ -2966,6 +2986,11 @@ public class ScarletDiscordCommands
         @Desc("Removes a VRChat Group Role")
         public void removeRole(SlashCommandInteractionEvent event, InteractionHook hook, @SlashOpt("vrchat-user") io.github.vrchatapi.model.User vrchatUser, @SlashOpt("vrchat-role") io.github.vrchatapi.model.GroupRole vrchatRole) throws Exception
         {
+            if (vrchatUser == null)
+            {
+                hook.sendMessage("No VRChat user found for that input.").setEphemeral(true).queue();
+                return;
+            }
             GroupMember glm = ScarletDiscordCommands.this.discord.scarlet.vrc.getGroupMembership(ScarletDiscordCommands.this.discord.scarlet.vrc.groupId, vrchatUser.getId());
             if (glm != null)
             {
@@ -3078,13 +3103,15 @@ public class ScarletDiscordCommands
             if (this.discord.shouldRedact(entry.getActorId(), event.getMember().getId()))
             {
                 String entryDescription = entry.getDescription();
-                if (entryDescription.contains(entry.getActorDisplayName()))
+                String actorDisplayName = entry.getActorDisplayName();
+                String selfDisplayName = this.discord.scarlet.vrc.currentUser != null ? this.discord.scarlet.vrc.currentUser.getDisplayName() : "a moderator";
+                if (entryDescription != null && actorDisplayName != null && entryDescription.contains(actorDisplayName))
                 {
-                    entryDescription = entryDescription.replace(entry.getActorDisplayName(), this.discord.scarlet.vrc.currentUser.getDisplayName());
+                    entryDescription = entryDescription.replace(actorDisplayName, selfDisplayName);
                 }
                 else
                 {
-                    entryDescription = String.format("User %s was banned by %s.", vrchatUser.getDisplayName(), this.discord.scarlet.vrc.currentUser.getDisplayName());
+                    entryDescription = String.format("User %s was banned by %s.", vrchatUser.getDisplayName(), selfDisplayName);
                 }
                 sb.append(entryDescription);
             }
@@ -3156,7 +3183,19 @@ public class ScarletDiscordCommands
     @DefaultPerms(Permission.USE_APPLICATION_COMMANDS)
     public void actorModerationSummary(SlashCommandInteractionEvent event, InteractionHook hook, @SlashOpt("vrchat-user") io.github.vrchatapi.model.User vrchatUser)
     {
+        if (vrchatUser == null)
+        {
+            hook.sendMessage("No VRChat user found for that input.").setEphemeral(true).queue();
+            return;
+        }
         String vrcId = vrchatUser.getId();
+        // Redaction gate (mirrors query-actor-history): do not expose another protected
+        // actor's moderation counts to a requester who should not see them.
+        if (this.discord.shouldRedact(vrcId, event.getMember().getId()))
+        {
+            hook.sendMessageFormat("No audit actor summary for [%s](<%s>) (%s)", vrchatUser.getDisplayName(), VrcWeb.Home.user(vrcId), vrcId).setEphemeral(true).queue();
+            return;
+        }
         OffsetDateTime to = OffsetDateTime.now(),
                        from = to.minusYears(10L);
         
@@ -3505,13 +3544,19 @@ public class ScarletDiscordCommands
                             {
                                 SelectOption[] pageOptions = selectors[page].applyContent();
                                 int ordinal = page * 25 + 1;
-                                builder.addComponents(Label.of(String.format("%s (%d thru %d)", fileValued.name(), ordinal, ordinal + pageOptions.length), StringSelectMenu.create(fileValued.id()+":"+page)
-                                    .addOptions(options)
-                                    .setDefaultValues(stringifier.apply(fileValued.get()))
+                                String currentValue = stringifier.apply(fileValued.get());
+                                StringSelectMenu.Builder pageMenu = StringSelectMenu.create(fileValued.id()+":"+page)
+                                    .addOptions(pageOptions)
                                     .setMinValues(0)
                                     .setMaxValues(1)
-                                    .setRequired(false)
-                                    .build()));
+                                    .setRequired(false);
+                                for (SelectOption pageOption : pageOptions)
+                                    if (pageOption.getValue().equals(currentValue))
+                                    {
+                                        pageMenu.setDefaultValues(currentValue);
+                                        break;
+                                    }
+                                builder.addComponents(Label.of(String.format("%s (%d thru %d)", fileValued.name(), ordinal, ordinal + pageOptions.length), pageMenu.build()));
                             }
                             modal = builder.build();
                             immediate = interaction ->
@@ -3731,7 +3776,8 @@ public class ScarletDiscordCommands
         {
 
             if (timeZoneId == null)
-                timeZoneId = ZoneOffset.of(event.getOption("time-zone-id", OptionMapping::getAsString));
+                try { timeZoneId = ZoneOffset.of(event.getOption("time-zone-id", OptionMapping::getAsString)); }
+                catch (Exception zoneEx) { timeZoneId = null; }
             if (timeZoneId == null)
             {
                 event.replyFormat("Invalid time zone/offset `%s`", event.getOption("time-zone-id", OptionMapping::getAsString)).queue();
@@ -3973,7 +4019,7 @@ public class ScarletDiscordCommands
             fileName = last25logs[0];
         }
         
-        if (!ScarletLogger.lfpattern.matcher(fileName).find())
+        if (!ScarletLogger.lfpattern.matcher(fileName).matches())
         {
             hook.sendMessage("Invalid log file name").setEphemeral(false).queue();
             return;
@@ -3981,6 +4027,20 @@ public class ScarletDiscordCommands
         
         File logs = new File(Scarlet.dir, "logs"),
              target = new File(logs, fileName);
+        // Defense in depth against path traversal: the resolved target must stay inside logs/.
+        try
+        {
+            if (!target.getCanonicalPath().startsWith(logs.getCanonicalPath() + File.separator))
+            {
+                hook.sendMessage("Invalid log file name").setEphemeral(false).queue();
+                return;
+            }
+        }
+        catch (java.io.IOException pathEx)
+        {
+            hook.sendMessage("Invalid log file name").setEphemeral(false).queue();
+            return;
+        }
         
         if (!target.isFile())
         {

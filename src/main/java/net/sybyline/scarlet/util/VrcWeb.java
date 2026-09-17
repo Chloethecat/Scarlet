@@ -59,7 +59,7 @@ public interface VrcWeb
         static String user(String userId) { return user+userId;}String user = HOME+"/user/";
         static String avatar(String avatarId) { return avatar+avatarId;}String avatar = HOME+"/avatar/";
         static String world(String worldId) { return world+worldId;}String world = HOME+"/world/";
-        static String instance(String location) { int $=location.indexOf(':');return instance(location.substring(0,$),location.substring($+1));}
+        static String instance(String location) { int $=location.indexOf(':');return $ < 0 ? instance(location, "") : instance(location.substring(0,$),location.substring($+1));}
         static String instance(String worldId, String instanceId) { return "https://vrchat.com/home/launch?worldId="+worldId+"&instanceId="+instanceId;}
         static String instanceShort(String shortOrSecureName) { return instanceShort + shortOrSecureName;}String instanceShort = "https://vrch.at/";
         static String instanceShort2(String shortOrSecureName) { return instanceShort2 + shortOrSecureName;}String instanceShort2 = "https://vrchat.com/i/";

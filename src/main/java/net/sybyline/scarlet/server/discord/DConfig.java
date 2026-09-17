@@ -862,7 +862,7 @@ public class DConfig
                     while (reader.hasNext())
                     {
                         String subgroup = reader.nextName();
-                        Object inner = map.get(group);
+                        Object inner = map.get(subgroup);
                         if (inner == null)
                         {
                             LOG.warn("Missing value in slot "+path(group, null, subgroup));
@@ -870,7 +870,7 @@ public class DConfig
                         }
                         else if (inner instanceof BaseValue)
                         {
-                            ((BaseValue<?>)value).read(reader);
+                            ((BaseValue<?>)inner).read(reader);
                         }
                         else if (inner instanceof Map)
                         {

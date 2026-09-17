@@ -110,7 +110,8 @@ public class ScarletStaffList
         List<String> ids;
         try (Reader r = MiscUtils.reader(this.staffListFile))
         {
-            ids = Arrays.asList(Scarlet.GSON_PRETTY.fromJson(r, String[].class));
+            String[] loaded = Scarlet.GSON_PRETTY.fromJson(r, String[].class);
+            ids = loaded == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(Arrays.asList(loaded));
         }
         catch (Exception ex)
         {
@@ -126,7 +127,7 @@ public class ScarletStaffList
     public boolean save()
     {
         String[] ids = this.getStaffIds();
-        try (Writer w = MiscUtils.writer(this.staffListFile))
+        try (Writer w = net.sybyline.scarlet.util.FileBackups.writer(this.staffListFile))
         {
             Scarlet.GSON_PRETTY.toJson(ids, String[].class, w);
         }

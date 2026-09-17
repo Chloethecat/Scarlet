@@ -310,7 +310,10 @@ public interface VrcLaunch
              }
              if (werr != WinError.ERROR_SUCCESS)
                  throw new Exception(String.format("Failed to locate VRChat via registry: 0x%08x", werr));
-             path = new String(buffer, 0, pcbData.getValue() - 2, StandardCharsets.UTF_16LE);
+             int regLen = pcbData.getValue() - 2;
+             if (regLen <= 0)
+                 throw new Exception("Failed to locate VRChat via registry: empty value");
+             path = new String(buffer, 0, regLen, StandardCharsets.UTF_16LE);
         }
         java.util.List<String> cmd = new java.util.ArrayList<>();
         cmd.add(new File(path, "launch.exe").getAbsolutePath());

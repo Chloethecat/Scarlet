@@ -935,7 +935,10 @@ public class ScarletDiscordUI
         }
 
         if (ic.ageGate != null && ic.ageGate.booleanValue() && !this.discord.checkMemberRespondVrcPerms(GroupPermissions.group_instance_age_gated_create, hook, event.getMember()))
+        {
             hook.sendMessage("You do not have permission to create age gated instances.").setEphemeral(true).queue();
+            return;
+        }
         
         hook.deleteMessageById(event.getMessageId()).queue();
 

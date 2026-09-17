@@ -151,6 +151,16 @@ public final class VrchatApiVersionChecker
         return v.trim();
     }
 
+    /**
+     * True for a stable release (no SemVer pre-release suffix). The community vrchatapi-java
+     * client publishes frequent {@code -nightly.N} builds; Scarlet intentionally tracks stable
+     * releases, so the update check ignores pre-releases and only flags a newer stable version.
+     */
+    static boolean isStableRelease(String version)
+    {
+        return version != null && version.indexOf('-') < 0;
+    }
+
     /** The higher of two version strings by {@link MiscUtils#compareSemVer}; blanks are ignored. */
     static String higherVersion(String a, String b)
     {
@@ -176,20 +186,25 @@ public final class VrchatApiVersionChecker
         }
         Matcher release = RELEASE_PATTERN.matcher(xml);
         if (release.find())
-            return normalizeVersion(release.group(1));
+        {
+            String releaseVersion = normalizeVersion(release.group(1));
+            if (isStableRelease(releaseVersion))
+                return releaseVersion;
+            // The <release> pointer is a pre-release/nightly; fall through and find the newest stable.
+        }
         Matcher versionMatcher = VERSION_PATTERN.matcher(xml);
         String latest = null;
         while (versionMatcher.find())
         {
             String candidate = normalizeVersion(versionMatcher.group(1));
-            if (MiscUtils.blank(candidate))
+            if (MiscUtils.blank(candidate) || !isStableRelease(candidate))
                 continue;
             if (latest == null || MiscUtils.compareSemVer(latest, candidate) < 0)
                 latest = candidate;
         }
         if (latest != null)
             return latest;
-        throw new IllegalStateException("No VRChat API versions were present in JitPack metadata");
+        throw new IllegalStateException("No stable VRChat API releases were present in JitPack metadata");
     }
 
     static String fetchLatestGitHubTag() throws Exception
@@ -213,14 +228,14 @@ public final class VrchatApiVersionChecker
             // Only accept real version tags (e.g. 1.20.8-nightly.16). This skips any other
             // "name" field and, importantly, guards against an error/rate-limit body whose
             // stray value would otherwise win compareSemVer's string-compare fallback.
-            if (candidate == null || !MiscUtils.SEMVER.matcher(candidate).matches())
+            if (candidate == null || !MiscUtils.SEMVER.matcher(candidate).matches() || !isStableRelease(candidate))
                 continue;
             if (latest == null || MiscUtils.compareSemVer(latest, candidate) < 0)
                 latest = candidate;
         }
         if (latest != null)
             return latest;
-        throw new IllegalStateException("No tags were present in the vrchatapi-java GitHub response");
+        throw new IllegalStateException("No stable vrchatapi-java release tags were present in the GitHub response");
     }
 
     public static boolean isExpectedUnavailable(Throwable failure)

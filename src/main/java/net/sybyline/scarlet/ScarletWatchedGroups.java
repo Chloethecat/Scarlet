@@ -265,6 +265,7 @@ public class ScarletWatchedGroups
             return false;
         }
         Map<String, WatchedGroup> watchedGroups = new ConcurrentHashMap<>();
+        if (watchedGroupsArray != null)
         for (WatchedGroup watchedGroup : watchedGroupsArray)
             if (watchedGroup != null && watchedGroup.id != null && watchedGroup.id.startsWith("grp_"))
                 watchedGroups.put(watchedGroup.id, watchedGroup);

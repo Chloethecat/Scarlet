@@ -8,7 +8,7 @@ import net.sybyline.scarlet.util.Func;
 
 public class ExtendedUserAgent
 {
-    private static String
+    private static volatile String
         currentGroupId,
         currentUserId,
         extendedUserAgent;

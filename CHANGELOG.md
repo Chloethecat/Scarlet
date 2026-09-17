@@ -1,6 +1,36 @@
 
 # Changelog
 
+## 0.4.19
+
+The largest maintenance release in a while: keeps Scarlet working against VRChat's current API, **restores the avatar images on moderation messages**, makes settings and moderation state **crash-safe to write**, adds a **verified-user notification**, and lands a large batch of reliability, correctness, and security fixes from a full codebase audit. Stays on stable VRChat API **1.21.0** (the newest nightly adds nothing Scarlet uses).
+
+### Added
+
+- **Verified-user notifications.** When a member passes age verification and is auto-invited to the group, Scarlet now posts an "Age Verification Complete" entry to the staff action-log channel — including the member's real VRChat age-verification status — **and** a confirmation in the member's ticket. Fires once for both the verified-role and self-link paths; new setting, on by default. (Previously, members who earned the verified role directly got no acknowledgement.)
+- **Crash-safe data persistence across the board.** The fsync + temp-then-atomic-rename + recover-from-backup protection `settings.json` already had now covers timed bans / pending actions, the staff and secret-staff lists, the Discord↔VRChat link map and per-user / per-audit metadata, the event calendar, the report template, and Discord permissions. A hard crash or power loss mid-write no longer drops a ban timer, staff roster, or moderation link; a truncated file is recovered from a backup on next load. (Verified by hard-crashing the machine mid-edit.)
+
+### Changed
+
+- **Tracks VRChat API `1.21.0`.** Bios and the user image fields moved to the separate `PublicProfile` response upstream; group lookup/calls/gallery moved to new signatures. A build on the older client can no longer read VRChat correctly.
+- **The API-update checker only flags stable releases now** — it ignores the community client's `-nightly.N` pre-releases (which you don't want running a live bot), and speaks up only when an actual stable ships.
+
+### Fixed
+
+- **Moderation avatar images restored.** VRChat moved `currentAvatarImageUrl` / `iconUrl` / `userIcon` off `User` onto `PublicProfile`; Scarlet was reading blanks and falling back to the robot on warns/kicks/bans. It now resolves the image from the (cached) public profile — full image → thumbnail → icon URL → user icon → robot only if all blank — and the same resolver feeds the pedestal-report and user-info embeds.
+- **Clicking Invite no longer unbans the target** (a stray duplicated code path issued an unban and blocked the UI on two REST calls).
+- **`actor-moderation-summary` now redacts** (same `shouldRedact` gate as the query-history commands) so it no longer leaks another protected actor's counts.
+- **Moderation-command reliability:** null-user hangs on add-role/remove-role/transfer-check/transfer-start/actor-summary; the immediate-ban tag menu and the enum-setting editor no longer throw past Discord's 25-option cap; the multi-ban/unban modals open again (invalid length bound); the busy-instance monitor embed updates again; the inverted blacklist enforcement; configured audit-type colors no longer wiped on save; two-level Discord config now loads; missing `return`s that bypassed the age-gate permission check and the empty-tags guard; pedestal reports classified correctly (missing `switch` breaks); boolean checkboxes reflect saved state and a wrongly-typed setting is skipped, not crashed.
+- **Stability / null-safety:** empty or corrupt JSON data files (staff, secret staff, watched entities, watched groups, permissions) load cleanly; the audit poll tolerates missing `hasNext`/`results`; unknown audit titles render as text not `[C@…`; NPE guards for unresolved-group permission checks, missing join dates, calendar close-after-end, and the redaction path; the data-directory discovery finds a working location instead of nulling out; closing a URL-input dialog with no input no longer freezes the UI on Linux/X11.
+- **Security / hardening:** NAT64 (`64:ff9b::/96`) addresses rejected by the public-URL guard; log-export path-traversal hardening (anchored match + canonical containment); size-capped streaming reads of untrusted URLs.
+- **Platform / process:** IPC socket stops at EOF (Unix-domain commands match again); empty Windows VRChat registry value no longer throws; unset `PATH` no longer NPEs a static initializer; Linux TTS installer terminal fallback (`xterm -e sh -c`), Solus/Clear Linux detection (`test -d`), and timeouts on the package-search/command-check subprocesses.
+- **Smaller:** avatar-search author provider (stray literal, URL-encoding, malformed-row skipping); `volatile` User-Agent statics; iOS-vs-PC avatar-rating copy-paste; tag-rename autocomplete refresh; report-tag separators; GitHub release parsing; `:`-less location parsing; UTF-8 JSON read; an option helper honoring `required`.
+
+### Notes
+
+- **Left as-is by design:** the Discord ban/kick hierarchy check (that's how Discord works).
+- **Reviewed and deferred:** the JSON cache holding its map lock across a network fetch, a few EDT/threading hot-spots, the logging shutdown-drain, and a mangled image-asset filename regex.
+
 ## 0.4.18-b4
 
 A second VRChat API update in quick succession. Unlike the last one this could not be absorbed by a dependency bump alone — VRChat renamed a field Scarlet reads, so this build carries an actual source change.

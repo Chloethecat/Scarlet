@@ -230,14 +230,17 @@ public interface MiscUtils
         return m.find() ? m.group() : fallback;
     }
 
+    static final String ROBOT_IMAGE_URL = "https://vrchat.com/api/1/file/file_0e8c4e32-7444-44ea-ade4-313c010d4bae/1/file";
+
     static String userImageUrl(User user)
     {
-        // API 1.21.0 unified user images into a single iconUrl (profilePicOverride / userIcon /
-        // currentAvatarImageUrl were removed from User).
-        String icon = user.getIconUrl();
+        // API 1.21.0+ moved the real image fields (profilePicOverride / userIcon /
+        // currentAvatarImageUrl) off User and onto PublicProfile, so a bare User rarely carries a
+        // usable iconUrl. Prefer ScarletVRChat.getUserImageUrl(userId); this is a User-only fallback.
+        String icon = user == null ? null : user.getIconUrl();
         if (icon != null && !icon.trim().isEmpty())
             return icon;
-        return "https://vrchat.com/api/1/file/file_0e8c4e32-7444-44ea-ade4-313c010d4bae/1/file"; // robot
+        return ROBOT_IMAGE_URL;
     }
 
     static String latestContentUrlOrNull(String fileId)
@@ -247,13 +250,33 @@ public interface MiscUtils
         int version;
         try (HttpURLInputStream http = HttpURLInputStream.get("https://vrchat.com/api/1/file/"+fileId))
         {
-            version = JSON.getGson().fromJson(new InputStreamReader(http), ModelFile.class).getVersions().stream().mapToInt(FileVersion::getVersion).max().orElse(1);
+            version = JSON.getGson().fromJson(new InputStreamReader(http, java.nio.charset.StandardCharsets.UTF_8), ModelFile.class).getVersions().stream().mapToInt(FileVersion::getVersion).max().orElse(1);
         }
         catch (Exception ex)
         {
             version = 1;
         }
         return "https://vrchat.com/api/1/file/"+fileId+"/"+version+"/file";
+    }
+
+    /**
+     * Reads the stream fully but aborts once more than {@code maxBytes} have been read, so a
+     * hostile/oversized (e.g. chunked, no-Content-Length) response cannot OOM the process. Use
+     * this for any read of an untrusted/user-supplied URL.
+     */
+    static byte[] readAllBytes(InputStream input, long maxBytes) throws IOException
+    {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(Math.max(1024, (int)Math.min(maxBytes, Math.max(0, input.available()))));
+        byte[] chunk = new byte[8192];
+        long total = 0L;
+        for (int n; (n = input.read(chunk)) != -1; )
+        {
+            total += n;
+            if (total > maxBytes)
+                throw new IOException("Response exceeds maximum allowed size ("+maxBytes+" bytes)");
+            out.write(chunk, 0, n);
+        }
+        return out.toByteArray();
     }
 
     static byte[] readAllBytes(InputStream input) throws IOException

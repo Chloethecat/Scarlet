@@ -144,7 +144,7 @@ public class ScarletData
         File targetFile = new File(this.dir, name);
         if (!targetFile.getParentFile().isDirectory())
             targetFile.getParentFile().mkdirs();
-        try (Writer writer = MiscUtils.writer(targetFile))
+        try (Writer writer = net.sybyline.scarlet.util.FileBackups.writer(targetFile))
         {
             JSON.getGson().toJson(data, type, writer);
         }
@@ -251,7 +251,10 @@ public class ScarletData
         if (!targetDir.isDirectory())
             targetDir.mkdirs();
         File targetFile = new File(targetDir, id);
-        try (Writer writer = MiscUtils.writer(targetFile))
+        // High-cardinality per-entity file: crash-safe atomic write (fsync) but keep=0 so we do
+        // not spawn a dated backup per user/audit-entry/event. Truncation-on-crash is the risk we
+        // are closing here; the singleton configs above keep dated backups.
+        try (Writer writer = net.sybyline.scarlet.util.FileBackups.writer(targetFile, 0))
         {
             JSON.getGson().toJson(data, type, writer);
         }

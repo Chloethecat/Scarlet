@@ -206,7 +206,7 @@ public class Scarlet implements Closeable
             if (implementationVersion != null && !implementationVersion.trim().isEmpty())
                 return implementationVersion.trim();
         }
-        return "0.4.18";
+        return "0.4.19";
     }
 
     public static void main(String[] args) throws Exception
@@ -997,6 +997,7 @@ public class Scarlet implements Closeable
                                      discordKickBanEnabled = this.settings.new FileValuedBoolean("discord_kick_ban_enabled", I18n.tr("setting.discord_kick_ban_enabled"), false),
                                      discordKickBanPrompted = this.settings.new FileValuedBoolean("discord_kick_ban_prompted", I18n.tr("setting.discord_kick_ban_prompted"), false),
                                      autoInviteOnVerify = this.settings.new FileValuedBoolean("auto_invite_group_on_verify", I18n.tr("setting.auto_invite_group_on_verify"), true),
+                                     announceVerifyComplete = this.settings.new FileValuedBoolean("announce_verify_complete", I18n.tr("setting.announce_verify_complete"), true),
                                      trainingMode = this.settings.new FileValuedBoolean("training_mode_enabled", I18n.tr("setting.training_mode_enabled"), false),
                                      uiAccentHeaders = this.settings.new FileValuedBoolean("ui_accent_headers", I18n.tr("setting.ui_accent_headers"), false);
     /** Desktop UI language override; blank/"system" follows the operating system language. Applied at startup (restart to change). */
@@ -1015,6 +1016,7 @@ public class Scarlet implements Closeable
     final ScarletSettings.FileValued<EnforcementAgeState> enforceInstances18plus = this.settings.new FileValuedEnum<>("enforce_instances_18_plus", I18n.tr("setting.enforce_instances_18_plus"), EnforcementAgeState.DISABLED);
     final ScarletSettings.FileValued<EnforcementListState> enforceInstancesWorlds = this.settings.new FileValuedEnum<>("enforce_instances_worlds", I18n.tr("setting.enforce_instances_worlds"), EnforcementListState.DISABLED);
     final ScarletSettings.FileValued<String[]> enforceInstancesWorldList = this.settings.new FileValuedStringArrayPattern("enforce_instances_world_list", I18n.tr("setting.enforce_instances_world_list"), new String[0], VrcIds.P_ID_WORLD, true);
+    final ScarletSettings.FileValued<Integer> autoCloseBotInstanceMinutes = this.settings.new FileValuedIntRange("auto_close_bot_instance_minutes", I18n.tr("setting.auto_close_bot_instance_minutes"), 0, 0, 1440);
     final ScarletSettings.FileValued<Integer> auditPollingInterval = this.settings.new FileValuedIntRange("audit_polling_interval", I18n.tr("setting.audit_polling_interval"), 60, 10, 300);
     // How far back /moderation-log reaches when consolidating a user's history. 0 = all recorded history.
     final ScarletSettings.FileValued<Integer> moderationLogLookbackDays = this.settings.new FileValuedIntRange("moderation_log_lookback_days", I18n.tr("setting.moderation_log_lookback_days"), 0, 0, 3650);
@@ -1597,6 +1599,7 @@ public class Scarlet implements Closeable
                 {
                     this.maybeCheckInstances();
                     this.maybeEnforceInstances();
+                    this.maybeAutoCloseBotInstance();
                 }
                 catch (Exception ex)
                 {
@@ -1741,7 +1744,8 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
                         int i = 0;
                         try
                         {
-                            for (; i < 65536; i++) buf[i] = (byte) (0xFF & in.read());
+                            int b;
+                            for (; i < 65536 && (b = in.read()) != -1; i++) buf[i] = (byte) b;
                         }
                         catch (IOException ioex)
                         {
@@ -2932,6 +2936,100 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
         }
     }
 
+    // Auto-close the bot's OWN instance once everyone else has left and the configured idle time
+    // elapses. Deliberately uses the live log-tailed roster (Scarlet's own presence data), NOT the
+    // group-instance API, so a genuinely active instance is never mistaken for empty. Only ever
+    // touches the one instance the bot is currently in.
+    private String autoCloseTrackedLocation = null;
+    private OffsetDateTime autoCloseIdleSince = null; // when it last became bot-only; null while others are present
+    void maybeAutoCloseBotInstance()
+    {
+        int minutes = this.autoCloseBotInstanceMinutes.get();
+        String loc = this.eventListener.clientLocation;
+        if (minutes <= 0 || loc == null)
+        {
+            // Feature off, or the bot isn't in an instance (e.g. a host/mod already closed it): stand down.
+            this.autoCloseTrackedLocation = null;
+            this.autoCloseIdleSince = null;
+            return;
+        }
+        if (!loc.equals(this.autoCloseTrackedLocation))
+        {
+            // Bot moved to a different instance: start fresh on this one.
+            this.autoCloseTrackedLocation = loc;
+            this.autoCloseIdleSince = null;
+        }
+        if (this.countOtherUsersInClientInstance() > 0)
+        {
+            // Someone else is here: keep it open, reset the idle timer to the full duration.
+            this.autoCloseIdleSince = null;
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (this.autoCloseIdleSince == null)
+        {
+            // Just became bot-only: begin counting.
+            this.autoCloseIdleSince = now;
+            return;
+        }
+        if (now.isBefore(this.autoCloseIdleSince.plusMinutes(minutes)))
+            return; // Idle, but not long enough yet.
+        // Timer elapsed: re-check the roster one last time before acting, then close.
+        if (this.countOtherUsersInClientInstance() > 0)
+        {
+            this.autoCloseIdleSince = null; // Someone showed up at the last moment.
+            return;
+        }
+        this.autoCloseIdleBotInstance(loc, minutes);
+        this.autoCloseTrackedLocation = null;
+        this.autoCloseIdleSince = null;
+    }
+    /** Users in the bot's current instance other than the bot itself, from the live join/leave roster. */
+    int countOtherUsersInClientInstance()
+    {
+        Set<String> roster = this.eventListener.clientLocation_userIdsJoinOrder;
+        if (roster == null)
+            return 0;
+        String self = this.vrc.currentUserId;
+        int count = 0;
+        synchronized (roster)
+        {
+            for (String userId : roster)
+                if (userId != null && !userId.equals(self))
+                    count++;
+        }
+        return count;
+    }
+    void autoCloseIdleBotInstance(String location, int minutes)
+    {
+        Location locationModel = Location.of(location);
+        if (locationModel == null || !locationModel.isConcrete())
+        {
+            LOG.warn("Auto-close: could not parse the bot's instance location '"+location+"'; not closing.");
+            return;
+        }
+        String worldName;
+        try
+        {
+            io.github.vrchatapi.model.World world = this.vrc.getWorld(locationModel.world);
+            worldName = world == null ? locationModel.world : world.getName();
+        }
+        catch (Exception ex)
+        {
+            worldName = locationModel.world;
+        }
+        if (this.vrc.closeInstance(locationModel.world, locationModel.instance, Boolean.TRUE, null) != null)
+        {
+            LOG.info("Auto-closed idle bot instance "+location+" ("+worldName+") after "+minutes+" min bot-only.");
+            try { this.discord.emitExtendedInstanceEnforcement(this, location, worldName, "Auto-closed: idle ("+minutes+" min, bot only)"); }
+            catch (Exception ex) { LOG.warn("Auto-close: failed to emit close notice", ex); }
+        }
+        else
+        {
+            LOG.warn("Auto-close: failed to close idle bot instance "+location+" ("+worldName+").");
+        }
+    }
+
     OffsetDateTime lastCalendarUpdate = OffsetDateTime.now(ZoneOffset.UTC);
     void maybeUpdateCalendar()
     {
@@ -3010,7 +3108,7 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
             break;
             case ENABLED_BLACKLIST:
             {
-                if (0 >= MiscUtils.indexOf(groupInstance.getWorld().getId(), enforceWorldsList))
+                if (0 <= MiscUtils.indexOf(groupInstance.getWorld().getId(), enforceWorldsList))
                 {
                     if (this.vrc.closeInstance(worldId, instanceId, true, null) != null)
                     {
@@ -3160,7 +3258,8 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
     }
     public boolean checkVrcRefresh(Exception ex)
     {
-        if (!ex.getMessage().contains("HTTP response code: 401"))
+        String vrcRefreshMsg = ex.getMessage();
+        if (vrcRefreshMsg == null || !vrcRefreshMsg.contains("HTTP response code: 401"))
             return false;
         this.queueVrcRefresh();
         return true;

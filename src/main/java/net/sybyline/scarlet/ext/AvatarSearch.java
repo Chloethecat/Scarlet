@@ -461,7 +461,7 @@ public interface AvatarSearch
                             } break;
                             case "ios":
                             case "iosrating": {
-                                ret.performance.pcRating = in.nextString();
+                                ret.performance.iosRating = in.nextString();
                             } break;
                             case "hasimpostor":
                             case "impostor": {

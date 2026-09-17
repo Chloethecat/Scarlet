@@ -81,7 +81,7 @@ public class ScarletAssociationData
         spec.id2sf = new HashMap<>(this.userId2userSnowflake);
         if (!this.associationDataFile.getParentFile().isDirectory())
             this.associationDataFile.getParentFile().mkdirs();
-        try (Writer w = MiscUtils.writer(this.associationDataFile))
+        try (Writer w = net.sybyline.scarlet.util.FileBackups.writer(this.associationDataFile))
         {
             Scarlet.GSON_PRETTY.toJson(spec, DataSpec.class, w);
         }

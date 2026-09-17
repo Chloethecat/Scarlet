@@ -307,6 +307,7 @@ public class ScarletVRChat implements Closeable
         this.cachedInventoryItems = new ScarletJsonCache<>("inv", InventoryItem.class);
         this.cachedModelFiles = new ScarletJsonCache<>("file", ModelFile.class);
         this.cachedFileAnalyses = new ScarletJsonCache<>("file.analysis", FileAnalysis.class);
+        this.cachedPublicProfiles = new ScarletJsonCache<>("pubprof", io.github.vrchatapi.model.PublicProfile.class);
     }
 
     final Scarlet scarlet;
@@ -347,6 +348,7 @@ public class ScarletVRChat implements Closeable
     final ScarletJsonCache<InventoryItem> cachedInventoryItems;
     final ScarletJsonCache<ModelFile> cachedModelFiles;
     final ScarletJsonCache<FileAnalysis> cachedFileAnalyses;
+    final ScarletJsonCache<io.github.vrchatapi.model.PublicProfile> cachedPublicProfiles;
     long localDriftMillis = 0L,
          latencyMillis = 0L;
 
@@ -1510,14 +1512,16 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
             int offset = 0, batchSize = 100;
             PaginatedGroupAuditLogEntryList pgalel;
             pgalel = groups.getGroupAuditLogs(this.groupId, batchSize, offset, from, to, actorIds, eventTypes, targetIds);
-            while (pgalel.getHasNext().booleanValue())
+            while (Boolean.TRUE.equals(pgalel.getHasNext()))
             {
-                audits.addAll(pgalel.getResults());
+                if (pgalel.getResults() != null)
+                    audits.addAll(pgalel.getResults());
                 offset += batchSize;
                 MiscUtils.sleep(250L);
                 pgalel = groups.getGroupAuditLogs(this.groupId, batchSize, offset, from, to, actorIds, eventTypes, targetIds);
             }
-            audits.addAll(pgalel.getResults());
+            if (pgalel.getResults() != null)
+                audits.addAll(pgalel.getResults());
             audits.sort(OLDEST_TO_NEWEST);
             return audits;
         }
@@ -1767,24 +1771,72 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
         }
     }
 
-    /** API 1.21.0 moved bio off the User object; fetch it from the public profile instead. */
-    public String getUserBio(String userId)
+    public io.github.vrchatapi.model.PublicProfile getPublicProfile(String userId)
+    {
+        return this.getPublicProfile(userId, Long.MAX_VALUE);
+    }
+    /**
+     * Fetches a user's public profile (cached). API 1.21.0 moved bio, badges and the user's
+     * image fields off the User object and onto PublicProfile, so moderation embeds and bio
+     * lookups resolve through here. Requested with asSelf=false, withGroupsAndWorlds=false.
+     */
+    public io.github.vrchatapi.model.PublicProfile getPublicProfile(String userId, long minEpoch)
     {
         if (userId == null)
+            return null;
+        io.github.vrchatapi.model.PublicProfile profile = this.cachedPublicProfiles.get(userId, minEpoch);
+        if (profile != null)
+            return profile;
+        if (this.cachedPublicProfiles.is404(userId))
             return null;
         UsersApi users = new UsersApi(this.client);
         try
         {
-            io.github.vrchatapi.model.PublicProfile profile = users.getPublicProfile(userId, null, null);
-            return profile == null ? null : profile.getBio();
+            profile = users.getPublicProfile(userId, Boolean.FALSE, Boolean.FALSE);
+            this.cachedPublicProfiles.put(userId, profile);
+            return profile;
         }
         catch (ApiException apiex)
         {
             this.scarlet.checkVrcRefresh(apiex);
-            if (apiex.getMessage() == null || !apiex.getMessage().contains("HTTP response code: 404"))
-                LOG.error("Error getting public profile bio: "+apiex.getMessage());
+            String msg = apiex.getMessage();
+            if (msg != null && msg.contains("HTTP response code: 404"))
+                this.cachedPublicProfiles.add404(userId);
+            else
+                LOG.error("Error getting public profile: "+msg);
             return null;
         }
+    }
+    /**
+     * Resolves the best profile image URL for a user, falling back to the robot placeholder.
+     * API 1.21.0 moved currentAvatarImageUrl / iconUrl / userIcon off User onto PublicProfile,
+     * so a bare User no longer carries a usable image; we fetch the (cached) public profile and
+     * try those fields in order.
+     */
+    /**
+     * Resolves the best profile image URL for a user, or null when the profile has no usable
+     * image. API 1.21.0 order: full current-avatar image (carries the profile-pic override when
+     * set) -> its thumbnail -> iconUrl -> userIcon.
+     */
+    public String getUserImageUrlOrNull(String userId)
+    {
+        io.github.vrchatapi.model.PublicProfile profile = this.getPublicProfile(userId, Long.MAX_VALUE);
+        if (profile == null)
+            return null;
+        String img = MiscUtils.nonBlankOrNull(profile.getCurrentAvatarImageUrl(), profile.getCurrentAvatarThumbnailImageUrl(), profile.getIconUrl());
+        return img != null ? img : MiscUtils.nonBlankOrNull(profile.getUserIcon());
+    }
+    /** As {@link #getUserImageUrlOrNull}, but falls back to the robot placeholder (for embed images that must not be empty). */
+    public String getUserImageUrl(String userId)
+    {
+        String img = this.getUserImageUrlOrNull(userId);
+        return img != null ? img : MiscUtils.ROBOT_IMAGE_URL;
+    }
+    /** API 1.21.0 moved bio off the User object; read it from the (cached) public profile. */
+    public String getUserBio(String userId)
+    {
+        io.github.vrchatapi.model.PublicProfile profile = this.getPublicProfile(userId, Long.MAX_VALUE);
+        return profile == null ? null : profile.getBio();
     }
 
     public List<LimitedWorld> searchWorlds(String name, Integer n, Integer offset)
@@ -2860,6 +2912,8 @@ CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
     public boolean checkUserHasVRChatPermission(GroupMember glm, GroupPermissions vrchatPermission)
     {
         if (glm == null)
+            return false;
+        if (this.group == null)
             return false;
         List<GroupRole> grl = this.group.getRoles();
         return grl != null && grl.stream().filter(Objects::nonNull).filter($ -> glm.getRoleIds().contains($.getId())).map(GroupRole::getPermissions).filter(Objects::nonNull).anyMatch($ -> $.contains(GroupPermissions.group_all) || $.contains(vrchatPermission));

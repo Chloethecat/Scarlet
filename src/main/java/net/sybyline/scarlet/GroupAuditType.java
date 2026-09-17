@@ -309,7 +309,7 @@ public enum GroupAuditType implements DEnum.DEnumString<GroupAuditType>
             }
             ret[index] = ch;
         }
-        return ret.toString();
+        return new String(ret);
     }
 
 }

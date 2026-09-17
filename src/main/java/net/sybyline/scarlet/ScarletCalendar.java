@@ -340,7 +340,6 @@ if(Scarlet.IS_DEV_ENV){groupId="grp_c19f568a-d105-442d-b82a-b5a2e103d13d";}
                 prev.needsCreate = start.minusMinutes(Math
                     .max(hostEarlyMins != null ? hostEarlyMins.longValue() : 0L,
                         guestEarlyMins != null ? guestEarlyMins.longValue() : 0L));
-                prev.needsClose = end.plusMinutes(closeAfterMins.longValue());
             }
             if (closeAfterMins != null)
             {
@@ -553,7 +552,7 @@ if(Scarlet.IS_DEV_ENV){groupId="grp_c19f568a-d105-442d-b82a-b5a2e103d13d";}
         DataSpec spec = new DataSpec();
         spec.alternateGuildSf = this.alternateGuildSf;
         spec.eventSpecs = new HashMap<>(this.eventSpecs);
-        try (Writer w = MiscUtils.writer(this.calendarFile))
+        try (Writer w = net.sybyline.scarlet.util.FileBackups.writer(this.calendarFile))
         {
             Scarlet.GSON_PRETTY.toJson(spec, DataSpec.class, w);
         }

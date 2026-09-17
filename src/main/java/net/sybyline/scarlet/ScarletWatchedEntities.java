@@ -272,6 +272,7 @@ public class ScarletWatchedEntities<E>
             return false;
         }
         Map<String, WatchedEntity> watchedEntities = new ConcurrentHashMap<>();
+        if (watchedEntitiesArray != null)
         for (WatchedEntity watchedEntity : watchedEntitiesArray)
             if (watchedEntity != null && watchedEntity.id != null && this.idValid.test(watchedEntity.id))
                 watchedEntities.put(watchedEntity.id, watchedEntity);

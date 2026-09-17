@@ -1,11 +1,11 @@
 {
-  "latest_release": "0.4.18",
-  "latest_build": "0.4.18-b4",
+  "latest_release": "0.4.19",
+  "latest_build": "0.4.19",
   "announcement": {
-    "id": "20260906-000000-b4",
+    "id": "20260917-000000-0419",
     "severity": "warning",
-    "title": "0.4.18-b4 — required update (VRChat API change)",
-    "message": "0.4.18-b4 is a required update. VRChat changed its API again, and this time it needed code changes rather than just a dependency bump: a field Scarlet reads on group posts was renamed upstream, so earlier builds cannot display group post roles correctly. Updating keeps VRChat and moderation features working.\n\nAlso in this build: group announcements now show their visibility, the roles they target, and who last edited them — matching what group posts already displayed.\n\nSeparately: there has been interest in a locally-hosted web UI for administering Scarlet. Because that would involve credential storage and administrator access, I want it done properly rather than improvised or AI-generated — I am looking for someone with genuine application-security experience to help design and build it. If that is you and you would like to contribute, please reach out in the Discord.",
-    "expires": "2026-10-06T00:00:00Z"
+    "title": "0.4.19 — required update (VRChat API 1.21.0)",
+    "message": "0.4.19 is a required update. VRChat moved to API 1.21.0, which removed and changed fields earlier builds read (user profile/avatar images, group calls and gallery, and more), so older builds can no longer talk to VRChat correctly. Updating keeps VRChat and moderation features working.\n\nThis build also makes Scarlet much harder to lose data from: settings and moderation data — watch lists, timed bans, staff lists, tags — are now written crash-safely and recovered from a backup if a file is truncated by a hard crash or power loss. Several moderation-command and UI reliability bugs were fixed as well.\n\nSeparately: there has been interest in a locally-hosted web UI for administering Scarlet. Because that would involve credential storage and administrator access, I want it done properly rather than improvised or AI-generated — I am looking for someone with genuine application-security experience to help design and build it. If that is you and you would like to contribute, please reach out in the Discord.",
+    "expires": "2026-10-17T00:00:00Z"
   }
 }

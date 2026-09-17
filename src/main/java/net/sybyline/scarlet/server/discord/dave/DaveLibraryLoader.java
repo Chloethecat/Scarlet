@@ -495,7 +495,7 @@ public class DaveLibraryLoader
                 else if (isCommandAvailable("kdesu"))
                     cmd = new String[]{"kdesu", "-c", inner};
                 else if (isCommandAvailable("xterm"))
-                    cmd = new String[]{"xterm", "-e", installCommand};
+                    cmd = new String[]{"xterm", "-e", "sh", "-c", installCommand + "; echo 'Press Enter to close'; read"};
                 else if (isCommandAvailable("gnome-terminal"))
                     cmd = new String[]{"gnome-terminal", "--", "sh", "-c", installCommand + "; echo 'Press Enter to close'; read"};
                 else if (isCommandAvailable("konsole"))

@@ -84,7 +84,7 @@ public class ScarletVRChatReportTemplate
             return false;
         this.contents = contents;
         this.templateFile.getParentFile().mkdirs();
-        try (BufferedWriter out = new BufferedWriter(MiscUtils.writer(this.templateFile)))
+        try (BufferedWriter out = new BufferedWriter(net.sybyline.scarlet.util.FileBackups.writer(this.templateFile)))
         {
             out.append(contents);
         }
@@ -185,7 +185,7 @@ public class ScarletVRChatReportTemplate
                 StringBuilder sb = new StringBuilder();
                 for (int idx = 0, len = tags.length, last = len - 1; idx < len; idx++)
                 {
-                    if (idx > 1)
+                    if (idx > 0)
                         sb.append(", ");
                     if (idx == last && idx > 0)
                         sb.append("and ");

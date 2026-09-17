@@ -1,5 +1,6 @@
 package net.sybyline.scarlet.util.tts;
 
+import java.util.concurrent.TimeUnit;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
@@ -365,8 +366,8 @@ public class LinuxPackageManagerDetector {
         DETECTION_COMMANDS.put("apk", new String[]{"which apk", "test -f /etc/alpine-release"});
         DETECTION_COMMANDS.put("xbps-install", new String[]{"which xbps-install", "test -d /var/db/xbps"});
         DETECTION_COMMANDS.put("emerge", new String[]{"which emerge", "test -d /etc/portage"});
-        DETECTION_COMMANDS.put("eopkg", new String[]{"which eopkg", "test -f /var/lib/eopkg"});
-        DETECTION_COMMANDS.put("swupd", new String[]{"which swupd", "test -f /usr/share/clear/bundles"});
+        DETECTION_COMMANDS.put("eopkg", new String[]{"which eopkg", "test -d /var/lib/eopkg"});
+        DETECTION_COMMANDS.put("swupd", new String[]{"which swupd", "test -d /usr/share/clear/bundles"});
         DETECTION_COMMANDS.put("nix-env", new String[]{"which nix-env", "test -d /nix"});
         DETECTION_COMMANDS.put("nix-shell", new String[]{"which nix-shell", "test -d /nix"});
         DETECTION_COMMANDS.put("nix", new String[]{"which nix", "test -d /nix"});
@@ -712,8 +713,15 @@ public class LinuxPackageManagerDetector {
             ProcessBuilder pb = new ProcessBuilder("sh", "-c", command);
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            int exitCode = p.waitFor();
-            return exitCode == 0;
+            try {
+                if (!p.waitFor(10, TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                    return false;
+                }
+                return p.exitValue() == 0;
+            } finally {
+                p.destroyForcibly();
+            }
         } catch (Exception e) {
             LOG.debug("Command check failed for '{}': {}", command, e.getMessage());
             return false;
@@ -783,10 +791,14 @@ public class LinuxPackageManagerDetector {
                         return true;
                     }
                 }
+                if (!p.waitFor(15, TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                    return true; // Assume available if the search stalled (e.g. package db locked)
+                }
+                return p.exitValue() == 0;
+            } finally {
+                p.destroyForcibly();
             }
-            
-            int exitCode = p.waitFor();
-            return exitCode == 0;
         } catch (Exception e) {
             LOG.debug("Repository search failed for {}: {}", pm.name, e.getMessage());
             return true; // Assume available on error

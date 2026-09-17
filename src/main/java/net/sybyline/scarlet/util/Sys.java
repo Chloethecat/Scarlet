@@ -11,7 +11,7 @@ public class Sys
 {
 
     private static final String PATH_SEPARATOR = System.getProperty("path.separator");
-    private static final Path[] PATHS = Arrays.stream(System.getenv("PATH").split(PATH_SEPARATOR)).map(Paths::get).toArray(Path[]::new);
+    private static final Path[] PATHS = Arrays.stream(Optional.ofNullable(System.getenv("PATH")).map($ -> $.split(PATH_SEPARATOR)).orElse(new String[0])).map(Paths::get).toArray(Path[]::new);
     private static final String[] PATHEXTS = Optional.ofNullable(System.getenv("PATHEXT")).map($ -> $.split(PATH_SEPARATOR)).orElse(new String[0]);
 
     public static boolean hasInPath(String name)

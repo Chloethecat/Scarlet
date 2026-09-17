@@ -19,8 +19,10 @@ public interface GithubApi
         }
         return ja.asList().stream()
             .map(JsonElement::getAsJsonObject)
-            .map($ -> $.has("tag_name") && !$.get("tag_name").isJsonNull() ? $.get("tag_name") : $.get("name"))
-            .map(JsonElement::getAsString)
+            .map($ -> $.has("tag_name") && !$.get("tag_name").isJsonNull() ? $.get("tag_name")
+                    : $.has("name") && !$.get("name").isJsonNull() ? $.get("name") : null)
+            .map($ -> $ == null ? null : $.getAsString())
+            .filter(java.util.Objects::nonNull)
             .toArray(String[]::new);
     }
 

@@ -338,7 +338,8 @@ public class DPerms
         {
             return;
         }
-        specs.forEach((type, spec) -> this.permissions.get(type).load(spec));
+        if (specs != null)
+            specs.forEach((type, spec) -> this.permissions.get(type).load(spec));
     }
 
     public void save()
@@ -348,7 +349,7 @@ public class DPerms
             specs.put(permType, this.permissions.get(permType).store(new PermSetSpec()));
         if (!this.file.getParentFile().isDirectory())
             this.file.getParentFile().mkdirs();
-        try (Writer out = MiscUtils.writer(this.file))
+        try (Writer out = net.sybyline.scarlet.util.FileBackups.writer(this.file))
         {
             Scarlet.GSON.toJson(specs, PermSetSpec.TYPE_TOKEN.getType(), out);
         }

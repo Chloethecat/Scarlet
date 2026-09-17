@@ -1009,7 +1009,7 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
         boolean newPlayerAdvisoryWanted = this.advisoryShowNewPlayers.get();
         boolean newPlayerTtsWanted = newPlayerAdvisoryWanted && this.announceNewPlayers.get();
         boolean newPlayerMobileWanted = this.scarlet.mobile.wants(ScarletMobile.NotificationType.NEW_PLAYER, ScarletMobile.Severity.WATCH);
-        if (user != null && (newPlayerAdvisoryWanted || (!preamble && (newPlayerTtsWanted || newPlayerMobileWanted))))
+        if (user != null && user.getDateJoined() != null && (newPlayerAdvisoryWanted || (!preamble && (newPlayerTtsWanted || newPlayerMobileWanted))))
         {
             long acctAgeDays = LocalDate.now().toEpochDay() - user.getDateJoined().toEpochDay();
             if (acctAgeDays <= this.announcePlayersNewerThan.get().longValue())

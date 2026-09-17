@@ -3842,37 +3842,6 @@ public class ScarletUI implements IScarletUI
                 }
             }
         });
-        String ownerId = this.scarlet.vrc.groupOwnerId;
-
-        if (!this.scarlet.staffMode)
-        if (ownerId == null)
-        {
-            this.scarlet.splash.queueFeedbackPopup(this.jframe, 2_000L, I18n.tr("ui.internalError"), I18n.tr("ui.groupOwnerIdMissing"), Color.PINK);
-            return;
-        }
-        
-        GroupMemberStatus status = this.scarlet.vrc.getGroupMembershipStatus(this.scarlet.vrc.groupId, id);
-        
-        if (status != GroupMemberStatus.BANNED)
-        {
-            this.scarlet.splash.queueFeedbackPopup(this.jframe, 2_000L, I18n.tr("ui.userNotBanned"), name);
-            return;
-        }
-
-        if (!this.scarlet.staffMode)
-        if (this.scarlet.pendingModActions.addPending(GroupAuditType.USER_UNBAN, id, ownerId) != null)
-        {
-            this.scarlet.splash.queueFeedbackPopup(this.jframe, 2_000L, I18n.tr("ui.userUnbanPending"), name, Color.CYAN);
-            return;
-        }
-        
-        if (!this.scarlet.vrc.unbanFromGroup(id))
-        {
-            this.scarlet.splash.queueFeedbackPopup(this.jframe, 2_000L, I18n.tr("ui.failedUnbanUser"), name, Color.PINK);
-            return;
-        }
-        
-        this.scarlet.splash.queueFeedbackPopup(this.jframe, 2_000L, I18n.tr("ui.unbannedUser"), name);
     }
 
     @Override

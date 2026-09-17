@@ -124,7 +124,7 @@ public final class DOptionEnum<E extends Enum<E>>
     }
     public OptionData option(boolean required)
     {
-        return this.option().setRequired(true);
+        return this.option().setRequired(required);
     }
 
     public void replyQueue(CommandAutoCompleteInteractionEvent event)

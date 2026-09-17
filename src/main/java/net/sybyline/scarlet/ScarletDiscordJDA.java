@@ -492,12 +492,12 @@ public class ScarletDiscordJDA implements ScarletDiscord
     Map<String, UniqueStrings> scarletPermission2roleSf = new HashMap<>();
     Map<String, String> scarletAuxWh2webhookUrl = new ConcurrentHashMap<>();
     Map<String, IncomingWebhookClient> scarletAuxWh2incomingWebhookClient = new ConcurrentHashMap<>();
-    Map<String, String> auditType2channelSf = new HashMap<>();
-    Map<String, String> auditExType2channelSf = new HashMap<>();
+    Map<String, String> auditType2channelSf = new ConcurrentHashMap<>();
+    Map<String, String> auditExType2channelSf = new ConcurrentHashMap<>();
     Map<String, UniqueStrings> auditType2scarletAuxWh = new ConcurrentHashMap<>();
-    Map<String, String> auditType2secretChannelSf = new HashMap<>();
-    Map<String, String> auditExType2secretChannelSf = new HashMap<>();
-    Map<String, Integer> auditType2color = new HashMap<>();
+    Map<String, String> auditType2secretChannelSf = new ConcurrentHashMap<>();
+    Map<String, String> auditExType2secretChannelSf = new ConcurrentHashMap<>();
+    Map<String, Integer> auditType2color = new ConcurrentHashMap<>();
     List<Action> queuedActions = Collections.synchronizedList(new LinkedList<>());
 
     ScarletDiscordCommands discordCommands = null;
@@ -1147,12 +1147,12 @@ public class ScarletDiscordJDA implements ScarletDiscord
             this.trainingChannelSf = null;
             this.evidenceRoot = null;
             this.ticketToolCategorySf = null;
-            this.auditType2channelSf = new HashMap<>();
-            this.auditExType2channelSf = new HashMap<>();
-            this.auditType2secretChannelSf = new HashMap<>();
-            this.auditExType2secretChannelSf = new HashMap<>();
-            this.scarletAuxWh2webhookUrl = new HashMap<>();
-            this.auditType2scarletAuxWh = new HashMap<>();
+            this.auditType2channelSf = new ConcurrentHashMap<>();
+            this.auditExType2channelSf = new ConcurrentHashMap<>();
+            this.auditType2secretChannelSf = new ConcurrentHashMap<>();
+            this.auditExType2secretChannelSf = new ConcurrentHashMap<>();
+            this.scarletAuxWh2webhookUrl = new ConcurrentHashMap<>();
+            this.auditType2scarletAuxWh = new ConcurrentHashMap<>();
         }
     }
 
@@ -1262,12 +1262,12 @@ public class ScarletDiscordJDA implements ScarletDiscord
         this.discordAccountAgeAlertMinutes = clampDiscordAccountAgeAlertMinutes(spec.discordAccountAgeAlertMinutes);
         this.scarletPermission2roleSf = spec.scarletPermission2roleSf == null ? new HashMap<>() : new HashMap<>(spec.scarletPermission2roleSf);
         this.scarletAuxWh2webhookUrl = spec.scarletAuxWh2webhookUrl == null ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(spec.scarletAuxWh2webhookUrl);
-        this.auditType2channelSf = spec.auditType2channelSf == null ? new HashMap<>() : new HashMap<>(spec.auditType2channelSf);
-        this.auditExType2channelSf = spec.auditExType2channelSf == null ? new HashMap<>() : new HashMap<>(spec.auditExType2channelSf);
+        this.auditType2channelSf = spec.auditType2channelSf == null ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(spec.auditType2channelSf);
+        this.auditExType2channelSf = spec.auditExType2channelSf == null ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(spec.auditExType2channelSf);
         this.auditType2scarletAuxWh = spec.auditType2scarletAuxWh == null ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(spec.auditType2scarletAuxWh);
-        this.auditType2secretChannelSf = spec.auditType2secretChannelSf == null ? new HashMap<>() : new HashMap<>(spec.auditType2secretChannelSf);
-        this.auditExType2secretChannelSf = spec.auditExType2secretChannelSf == null ? new HashMap<>() : new HashMap<>(spec.auditExType2secretChannelSf);
-        Map<String, Integer> auditType2color = new HashMap<>();
+        this.auditType2secretChannelSf = spec.auditType2secretChannelSf == null ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(spec.auditType2secretChannelSf);
+        this.auditExType2secretChannelSf = spec.auditExType2secretChannelSf == null ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(spec.auditExType2secretChannelSf);
+        Map<String, Integer> auditType2color = new ConcurrentHashMap<>();
         if (spec.auditType2color != null && !spec.auditType2color.isEmpty())
             spec.auditType2color.forEach((auditType, colorString) -> {
                 try
@@ -1308,7 +1308,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
         spec.scarletPermission2roleSf = new HashMap<>(this.scarletPermission2roleSf);
         spec.scarletAuxWh2webhookUrl = new HashMap<>(this.scarletAuxWh2webhookUrl);
         Map<String, String> auditType2color = new HashMap<>();
-        if (this.auditType2color != null && this.auditType2color.isEmpty())
+        if (this.auditType2color != null && !this.auditType2color.isEmpty())
             this.auditType2color.forEach((auditType, color) -> auditType2color.put(auditType, Integer.toHexString(color)));
         spec.auditType2color = auditType2color;
         spec.queuedActions = new ArrayList<>(this.queuedActions);
@@ -2096,6 +2096,8 @@ public class ScarletDiscordJDA implements ScarletDiscord
         if (invite.sent)
         {
             LOG.info("Auto-invited Discord member {} (VRChat {}) to VRChat group {} after verification.", member.getId(), vrcId, groupId);
+            if (this.scarlet.announceVerifyComplete.get())
+                this.announceVerificationComplete(member, vrcId, groupId);
             return "You've been sent an invite to our VRChat group - check your VRChat notifications!";
         }
         LOG.warn("Auto-invite to VRChat group {} for {} (VRChat {}) was not sent: {}", groupId, member.getId(), vrcId, invite.logSummary);
@@ -2112,6 +2114,74 @@ public class ScarletDiscordJDA implements ScarletDiscord
         case FAILED:
         default:
             return "I couldn't send a VRChat group invite because VRChat rejected the request. Please contact staff if you still need access.";
+        }
+    }
+
+    /**
+     * On a successful post-verification auto-invite, tells both sides the verification landed:
+     * a staff embed in the Discord action-log channel, and a confirmation in the member's open
+     * ticket channel (if one exists). Gated by {@link Scarlet#announceVerifyComplete}. Best-effort
+     * and fully self-contained — it never throws back into the invite flow.
+     */
+    void announceVerificationComplete(Member member, String vrcId, String groupId)
+    {
+        try
+        {
+            if (member == null)
+                return;
+            String vrcDisplayName = null;
+            String vrcAgeStatusText = null;
+            try
+            {
+                User vrcUser = this.scarlet.vrc.getUser(vrcId, System.currentTimeMillis() - 86400_000L);
+                if (vrcUser != null)
+                {
+                    vrcDisplayName = vrcUser.getDisplayName();
+                    Object ageStatus = vrcUser.getAgeVerificationStatus();
+                    if (ageStatus != null)
+                        vrcAgeStatusText = ageStatus.toString();
+                }
+            }
+            catch (Exception resolveEx)
+            {
+                LOG.debug("Could not resolve VRChat profile for {} while announcing verification: {}", vrcId, resolveEx.getMessage());
+            }
+            String vrcLabel = (vrcDisplayName == null ? "" : MarkdownSanitizer.escape(vrcDisplayName) + " ")
+                + "([`" + vrcId + "`](https://vrchat.com/home/user/" + vrcId + "))";
+
+            // Staff-facing: action-log channel
+            TextChannel logChannel = this.getDiscordActionLogChannel();
+            if (logChannel != null)
+            {
+                EmbedBuilder embed = new EmbedBuilder()
+                    .setTitle("Age Verification Complete")
+                    .setColor(0x3BA55D)
+                    .setTimestamp(OffsetDateTime.now(ZoneOffset.UTC))
+                    .addField("Member", MarkdownSanitizer.escape(member.getEffectiveName()) + " (" + member.getUser().getAsMention() + ", `" + member.getId() + "`)", false)
+                    .addField("VRChat", vrcLabel, false)
+                    .addField("Age verification", "`" + (vrcAgeStatusText == null ? "unknown" : vrcAgeStatusText) + "`", true)
+                    .addField("Group", "`" + groupId + "`", true)
+                    .addField("Outcome", "Verified and auto-invited to the group.", false);
+                logChannel.sendMessageEmbeds(embed.build()).queue(
+                    $ -> {},
+                    error -> LOG.warn("Failed to emit verification-complete log to {}: {}", this.discordActionLogChannelSf, error.getMessage()));
+            }
+
+            // User-facing: their open ticket channel, if any
+            GuildMessageChannel ticket = this.findOpenTicketChannelFor(member.getGuild(), member);
+            if (ticket != null)
+            {
+                String message = member.getUser().getAsMention()
+                    + " you're verified \u2014 a VRChat group invite has been sent to your account. "
+                    + "Check your VRChat notifications to accept it and receive your role.";
+                ticket.sendMessage(message).queue(
+                    $ -> {},
+                    error -> LOG.warn("Failed to post verification-complete message in ticket {}: {}", ticket.getId(), error.getMessage()));
+            }
+        }
+        catch (Exception ex)
+        {
+            LOG.warn("Exception announcing verification completion for {} ({})", member == null ? "?" : member.getId(), vrcId, ex);
         }
     }
 
@@ -2564,7 +2634,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
             
             EmbedBuilder embed = this.embed(entryMeta, true)
                 .setTitle(MarkdownSanitizer.escape(target.getDisplayName()), "https://vrchat.com/home/user/"+target.getId())
-                .setImage(MiscUtils.userImageUrl(target))
+                .setImage(this.scarlet.vrc.getUserImageUrl(target.getId()))
             ;
             
             List<LimitedUserGroups> lugs = this.scarlet.vrc.snapshot(entryMeta);
@@ -3186,8 +3256,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
                     .setFooter(ScarletDiscord.FOOTER_PREFIX+"Extended event")
                     .setTimestamp(OffsetDateTime.now(ZoneOffset.UTC))
             ;
-            User user = this.scarlet.vrc.getUser(userId);
-            String aviThumbnail = user == null ? null : user.getIconUrl();
+            String aviThumbnail = this.scarlet.vrc.getUserImageUrlOrNull(userId);
             if (aviThumbnail != null && !aviThumbnail.isEmpty())
                 builder.setThumbnail(aviThumbnail);
             VersionedFile versionedFile = this.avatarName2Bundle.get(avatarDisplayName);
@@ -3278,10 +3347,10 @@ public class ScarletDiscordJDA implements ScarletDiscord
             String contentTypeLowerCase = contentType.toLowerCase();
             switch (contentTypeLowerCase)
             {
-            case "image": act = VRChatHelpDeskURLs.ModerationReportAccountContentType.GALLERY;
-            case "emoji": act = VRChatHelpDeskURLs.ModerationReportAccountContentType.EMOJI;
-            case "sticker": act = VRChatHelpDeskURLs.ModerationReportAccountContentType.STICKERS;
-            case "palette": act = VRChatHelpDeskURLs.ModerationReportAccountContentType.OTHER;
+            case "image":   act = VRChatHelpDeskURLs.ModerationReportAccountContentType.GALLERY;  break;
+            case "emoji":   act = VRChatHelpDeskURLs.ModerationReportAccountContentType.EMOJI;    break;
+            case "sticker": act = VRChatHelpDeskURLs.ModerationReportAccountContentType.STICKERS; break;
+            case "palette": act = VRChatHelpDeskURLs.ModerationReportAccountContentType.OTHER;    break;
             }
             return channel.sendMessageEmbeds(new EmbedBuilder()
                 .setTitle(MarkdownSanitizer.escape(displayName)+("aeiou".indexOf(Character.toLowerCase(contentType.charAt(0)))<0?" spawned a ":" spawned an ")+contentTypeLowerCase+" pedestal", "https://vrchat.com/home/user/"+userId)
@@ -3504,7 +3573,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
                 
                 if (sb.length() > 4096)
                 {
-                    channel.editMessageEmbedsById(instanceEmbedMessage.messageSnowflake, embed.setDescription("See `players.txt` for connected users").build()).setAttachments(AttachedFile.fromData(sb.toString().getBytes(StandardCharsets.UTF_8), "players.txt"));
+                    channel.editMessageEmbedsById(instanceEmbedMessage.messageSnowflake, embed.setDescription("See `players.txt` for connected users").build()).setAttachments(AttachedFile.fromData(sb.toString().getBytes(StandardCharsets.UTF_8), "players.txt")).complete();
                     return;
                 }
                 

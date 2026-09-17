@@ -364,6 +364,12 @@ public class HttpURLInputStream extends FilterInputStream
         if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress() || address.isMulticastAddress())
             return false;
         byte[] bytes = address.getAddress();
+        if (bytes.length == 16
+            && (bytes[0]&0xFF)==0x00 && (bytes[1]&0xFF)==0x64 && (bytes[2]&0xFF)==0xFF && (bytes[3]&0xFF)==0x9B
+            && bytes[4]==0 && bytes[5]==0 && bytes[6]==0 && bytes[7]==0
+            && bytes[8]==0 && bytes[9]==0 && bytes[10]==0 && bytes[11]==0)
+            // NAT64 (64:ff9b::/96) embeds an IPv4 address; reject so an internal IPv4 can't be reached via IPv6.
+            return false;
         if (bytes.length == 4)
         {
             int b0 = bytes[0] & 0xFF;
