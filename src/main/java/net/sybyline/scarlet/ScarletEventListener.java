@@ -38,6 +38,7 @@ import net.sybyline.scarlet.ext.AvatarSearch;
 import net.sybyline.scarlet.util.CollectionMap;
 import net.sybyline.scarlet.util.MiscUtils;
 import net.sybyline.scarlet.util.Pacer;
+import net.sybyline.scarlet.util.TrustRank;
 import net.sybyline.scarlet.util.VersionedFile;
 import net.sybyline.scarlet.util.VrcIds;
 import net.sybyline.scarlet.util.tts.TtsProvider;
@@ -86,6 +87,10 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
         this.advisoryShowMixedCharacterNames = scarlet.settings.new FileValuedBoolean("advisory_show_mixed_character_names", I18n.tr("setting.advisory_show_mixed_character_names"), true);
         this.advisoryShowVotesToKick = scarlet.settings.new FileValuedBoolean("advisory_show_votes_to_kick", I18n.tr("setting.advisory_show_votes_to_kick"), true);
         this.advisoryShowSuspiciousPronouns = scarlet.settings.new FileValuedBoolean("advisory_show_suspicious_pronouns", I18n.tr("setting.advisory_show_suspicious_pronouns"), true);
+        this.advisoryFlagNuisanceRank = scarlet.settings.new FileValuedBoolean("advisory_flag_nuisance_rank", I18n.tr("setting.advisory_flag_nuisance_rank"), true);
+        this.advisoryFlagVisitorRank = scarlet.settings.new FileValuedBoolean("advisory_flag_visitor_rank", I18n.tr("setting.advisory_flag_visitor_rank"), false);
+        this.announceNuisanceRank = scarlet.settings.new FileValuedBoolean("tts_announce_nuisance_rank", I18n.tr("setting.tts_announce_nuisance_rank"), true);
+        this.announceVisitorRank = scarlet.settings.new FileValuedBoolean("tts_announce_visitor_rank", I18n.tr("setting.tts_announce_visitor_rank"), false);
 
         this.attemptAvatarImageMatch = scarlet.settings.new FileValuedBoolean("attempt_avatar_image_match", I18n.tr("setting.attempt_avatar_image_match"), false);
     }
@@ -132,6 +137,10 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
                                      advisoryShowMixedCharacterNames,
                                      advisoryShowVotesToKick,
                                      advisoryShowSuspiciousPronouns,
+                                     advisoryFlagNuisanceRank,
+                                     advisoryFlagVisitorRank,
+                                     announceNuisanceRank,
+                                     announceVisitorRank,
                                      attemptAvatarImageMatch;
     final ScarletSettings.FileValued<Integer> announcePlayersNewerThan;
 
@@ -926,6 +935,7 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
         // Spoken fragments for this join are collected here and emitted as a
         // single combined TTS callout at the end, instead of one clip per rule.
         List<String> ttsParts = new ArrayList<>();
+        boolean nuisanceChime = false; // when set, the combined callout is preceded by the bundled nuisance alarm tone
 
         if (!Objects.equals(this.clientUserId, userId)
          && TtsService.shouldAlertMixedCharacterName(userDisplayName))
@@ -1042,6 +1052,34 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
             }
         }
         
+        // check trust rank — Nuisance warrants a flag + alarm chime; Visitor is opt-in (mods enable it)
+        if (user != null)
+        {
+            TrustRank rank = TrustRank.of(user.getTags());
+            if (rank == TrustRank.NUISANCE)
+            {
+                if (this.advisoryFlagNuisanceRank.get())
+                {
+                    addAdvisory(advisories, I18n.tr("adv.nuisanceRank"));
+                    priority[0] = Math.max(priority[0], 1000);
+                }
+                if (!preamble && this.announceNuisanceRank.get())
+                {
+                    ttsParts.add(I18n.tr("adv.ttsNuisanceRank"));
+                    nuisanceChime = true; // play the bundled alarm tone ahead of this join's callout
+                }
+            }
+            else if (rank == TrustRank.VISITOR)
+            {
+                if (this.advisoryFlagVisitorRank.get())
+                {
+                    addAdvisory(advisories, I18n.tr("adv.visitorRank"));
+                }
+                if (!preamble && this.announceVisitorRank.get())
+                    ttsParts.add(I18n.tr("adv.ttsVisitorRank"));
+            }
+        }
+
         // TODO : check staff
 
         // Emit everything gathered above as one combined callout, e.g.
@@ -1052,7 +1090,11 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
             line.append(I18n.tr("adv.joinedLobbyFmt", TtsService.sanitizeName(userDisplayName)));
             for (String part : ttsParts)
                 line.append(' ').append(part);
-            this.scarlet.getTtsService().submit("join-"+Long.toUnsignedString(System.nanoTime()), line.toString());
+            String joinMarker = "join-"+Long.toUnsignedString(System.nanoTime());
+            if (nuisanceChime)
+                this.scarlet.getTtsService().submitNuisanceJoinAlert(joinMarker, line.toString());
+            else
+                this.scarlet.getTtsService().submit(joinMarker, line.toString());
         }
 
         return overall_type;

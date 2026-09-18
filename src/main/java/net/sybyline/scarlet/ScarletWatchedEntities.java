@@ -64,11 +64,11 @@ public class ScarletWatchedEntities<E>
         {
             UNKNOWN(null),
             
-            MALICIOUS(Color.RED),
-            NUISANCE(Color.ORANGE),
+            MALICIOUS(new Color(235,  95,  95)),
+            NUISANCE(new Color(235, 165,  65)),
             
-            COMMUNITY(Color.GREEN),
-            AFFILIATED(Color.BLUE),
+            COMMUNITY(new Color( 95, 200, 120)),
+            AFFILIATED(new Color( 95, 165, 235)),
             
             OTHER(null),
             ;

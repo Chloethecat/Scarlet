@@ -206,7 +206,7 @@ public class Scarlet implements Closeable
             if (implementationVersion != null && !implementationVersion.trim().isEmpty())
                 return implementationVersion.trim();
         }
-        return "0.4.19";
+        return "0.4.20";
     }
 
     public static void main(String[] args) throws Exception
@@ -564,14 +564,15 @@ public class Scarlet implements Closeable
             Console console = System.console();
             String answer = null;
             if (console != null)
+            {
                 answer = console.readLine("%sSelect [1-%d] (default 1): ", sb.toString(), candidates.size());
+            }
             else
             {
-                System.out.print(sb + "Select [1-" + candidates.size() + "] (default 1): ");
-                @SuppressWarnings("resource")
-                Scanner scanner = new Scanner(System.in);
-                if (scanner.hasNextLine())
-                    answer = scanner.nextLine();
+                // No interactive console (e.g. a headless service with stdin detached or
+                // piped from /dev/null): never risk a blocking stdin read here \u2014 log the
+                // folders and deterministically default to the first candidate.
+                System.out.println(sb + "No interactive console; defaulting to the first data folder: " + candidates.get(0).getAbsolutePath());
             }
             if (answer != null)
             {
@@ -1142,6 +1143,10 @@ public class Scarlet implements Closeable
     final ScarletSettings.FileValued<String[]> enforceInstancesWorldList = this.settings.new FileValuedStringArrayPattern("enforce_instances_world_list", I18n.tr("setting.enforce_instances_world_list"), new String[0], VrcIds.P_ID_WORLD, true);
     final ScarletSettings.FileValued<Integer> autoCloseBotInstanceMinutes = this.settings.new FileValuedIntRange("auto_close_bot_instance_minutes", I18n.tr("setting.auto_close_bot_instance_minutes"), 0, 0, 1440);
     final ScarletSettings.FileValued<Integer> auditPollingInterval = this.settings.new FileValuedIntRange("audit_polling_interval", I18n.tr("setting.audit_polling_interval"), 60, 10, 300);
+    // How often (seconds) to poll the group's live open instances so the follow-into-new-instance
+    // feature reacts without waiting out the audit-log cadence + ingest lag. 0 disables the fast path
+    // (falls back to audit-driven detection). Only polls at all when launch-on-instance-create is on.
+    final ScarletSettings.FileValued<Integer> instanceFollowFastPollSeconds = this.settings.new FileValuedIntRange("instance_follow_fast_poll_seconds", I18n.tr("setting.instance_follow_fast_poll_seconds"), 30, 0, 300);
     // How far back /moderation-log reaches when consolidating a user's history. 0 = all recorded history.
     final ScarletSettings.FileValued<Integer> moderationLogLookbackDays = this.settings.new FileValuedIntRange("moderation_log_lookback_days", I18n.tr("setting.moderation_log_lookback_days"), 0, 0, 3650);
     /** How much to fade players who have left the instance, as a percent blended toward the background (0 = no dimming). */
@@ -1677,6 +1682,7 @@ public class Scarlet implements Closeable
                     if (now < this.auditFastPollUntilMillis && now - lastIter >= AUDIT_FAST_POLL_PERIOD_MILLIS)
                         break;
                     this.spin();
+                    this.maybeFastDetectNewInstance();
                 }
                 // maybe refresh
                 try
@@ -1746,6 +1752,15 @@ public class Scarlet implements Closeable
                 catch (Exception ex)
                 {
                     LOG.error("Exception maybe mod summary", ex);
+                }
+                // maybe outstanding-moderation re-ping (was never invoked before)
+                if (!this.staffMode) try
+                {
+                    this.maybeOutstandingMod();
+                }
+                catch (Exception ex)
+                {
+                    LOG.error("Exception maybe outstanding mod", ex);
                 }
                 // maybe poll action
                 try
@@ -3039,6 +3054,75 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
             this.settings.lastAnnouncementId.set(id);
     }
 
+    // ---- Fast follow-into-new-instance detection ------------------------------------------------
+    // The audit-driven launch (emitInstanceCreate) waits for the group.instance.create audit entry,
+    // which is bounded by the audit poll cadence AND VRChat's audit ingest lag — together ~90s.
+    // getGroupInstances reflects live open instances with far less lag, so when the follow feature is
+    // enabled we poll it on a short, self-limiting cadence and cold-boot the client the moment a new
+    // group instance appears. The launch is deduped (ScarletDiscord.launchClientIntoInstanceIfEnabled)
+    // so the later audit entry never double-launches.
+    private final java.util.Set<String> knownGroupInstanceLocations = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private boolean fastInstanceBaselineSeeded = false;
+    private long lastFastInstancePollMillis = 0L;
+    private long fastInstancePollBackoffUntilMillis = 0L;
+    void maybeFastDetectNewInstance()
+    {
+        // Only worth an API call when the follow-into-new-instance feature is actually on.
+        if (this.staffMode || !this.discord.isLaunchOnInstanceCreateEnabled())
+            return;
+        int secs = this.instanceFollowFastPollSeconds.get();
+        if (secs <= 0)
+            return; // fast path disabled by the user
+        String groupId = this.vrc.groupId;
+        if (groupId == null || groupId.isEmpty())
+            return;
+        long period = Math.max(15L, (long) secs) * 1000L; // never faster than 15s, whatever the setting
+        long now = System.currentTimeMillis();
+        if (now < this.fastInstancePollBackoffUntilMillis || now - this.lastFastInstancePollMillis < period)
+            return;
+        this.lastFastInstancePollMillis = now;
+        List<GroupInstance> instances = this.vrc.getGroupInstances(groupId);
+        if (instances == null)
+        {
+            // Error or possible rate-limit: stand off a full minute rather than retry aggressively.
+            this.fastInstancePollBackoffUntilMillis = now + 60_000L;
+            return;
+        }
+        java.util.Set<String> current = new java.util.HashSet<>();
+        for (GroupInstance gi : instances)
+        {
+            String loc = gi == null ? null : gi.getLocation();
+            if (loc != null && !loc.isEmpty())
+                current.add(loc);
+        }
+        if (!this.fastInstanceBaselineSeeded)
+        {
+            // First successful poll: adopt whatever is already open as the baseline so pre-existing
+            // instances are never mistaken for freshly created ones.
+            this.knownGroupInstanceLocations.addAll(current);
+            this.fastInstanceBaselineSeeded = true;
+            return;
+        }
+        String botLocation = this.eventListener == null ? null : this.eventListener.clientLocation;
+        String newInstance = null;
+        for (String loc : current)
+        {
+            if (this.knownGroupInstanceLocations.contains(loc) || loc.equals(botLocation))
+                continue;
+            newInstance = loc; // act on one new instance per cycle
+        }
+        // Record everything currently open (so each fires at most once) and prune closed ones.
+        this.knownGroupInstanceLocations.addAll(current);
+        this.knownGroupInstanceLocations.retainAll(current);
+        if (newInstance != null)
+        {
+            LOG.info("Fast instance detection: new group instance {} — following", newInstance);
+            this.discord.launchClientIntoInstanceIfEnabled(newInstance);
+            // Nudge the audit poll so the Discord instance embed/thread still posts promptly.
+            this.pollAuditSoon();
+        }
+    }
+
     void maybeCheckInstances()
     {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -3300,7 +3384,7 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
         {
             next = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
             while (now.isBefore(next))
-                next.minusHours(24L);
+                next = next.minusHours(24L);
         }
         if (now.isAfter(next))
         {
@@ -3322,7 +3406,7 @@ Send-ScarletIPC -GroupID 'grp_00000000-0000-0000-0000-000000000000' -Message 'st
         {
             next = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
             while (now.isBefore(next))
-                next.minusHours(24L);
+                next = next.minusHours(24L);
         }
         if (now.isAfter(next))
         {

@@ -1,6 +1,34 @@
 
 # Changelog
 
+## 0.4.20
+
+Adds **VRChat trust ranks** to the player list with Nuisance/Visitor advisories and callouts, makes the **follow-into-new-instance** feature react in about a third of the time, and reworks the **advisory colors** so they read cleanly on a dark theme and over a Discord screenshare.
+
+### Added
+
+- **Trust ranks in the player list.** A new **Rank** column shows each player's VRChat trust rank — Visitor, New User, User, Known, Trusted, plus **Nuisance** for troll-flagged accounts — derived from the account's own tags with no extra API calls. The rank is coloured in **VRChat's own trust-rank colours**, and that colour stays in the Rank column only — it never changes how the rest of the row is coloured or logged (watched-group, community, advisory colours are untouched). VRChat only returns a full tag set for some users, so it's best-effort, but correct the large majority of the time.
+- **Nuisance-rank alert.** A troll-flagged (Nuisance) account joining now raises an advisory (it sorts to the top of the list) **and** plays the bundled **siren-chirp** alert sound followed by a spoken “Nuisance rank” callout. On by default; the sound ships inside the build (extracted to a scratch temp file for playback, never the data folder), so there's nothing to install. Toggles: `advisory_flag_nuisance_rank`, `tts_announce_nuisance_rank`.
+- **Visitor-rank advisory (opt-in).** For owners who want to keep an eye out for brand-new Visitor-rank accounts: an optional row advisory and an optional spoken callout, both **off by default** (`advisory_flag_visitor_rank`, `tts_announce_visitor_rank`). Visitors are usually fine, so this is there if you want it and silent if you don't.
+- **Report a user's profile picture / user icon to VRChat.** Moderation embeds now carry pre-filled VRChat T&S report links for a user's **profile picture** and **user icon** — the two account-level content types that had a report-URL builder but were never surfaced anywhere. (Sticker, emoji, print and prop reports were already offered on their in-instance spawn embeds.) As with everything else, Scarlet only assembles the pre-filled report; a human files it with VRChat.
+- **Bundled alert SFX set.** The `BL_SFX_*` sound effects are rendered to WAV and bundled in the build so they play on every audio route — local player, Java Sound, and the Discord-voice output — with no MP3 decoder dependency. SIREN_CHIRP drives the nuisance alarm today; the rest are ready to wire to their events.
+
+### Changed
+
+- **Follow-into-new-instance reacts far faster (~90s → ~30s).** The auto-launch used to wait for the group **audit log**, which is bounded both by the poll interval and by VRChat's own audit-ingest lag. When *Launch on Instance Create* is enabled, Scarlet now also watches the group's live open-instance list on a short, self-limiting cadence and cold-boots the client the moment a new instance appears. It stays gentle on the API — one lightweight call at a tunable interval (`instance_follow_fast_poll_seconds`, default 30s, 15s floor), only while the feature is on, backing off a full minute on any error or rate-limit — and it's deduplicated with the audit path so an instance is never launched into twice.
+- **Advisory colours reworked for readability.** The player-list advisory colours were raw AWT primaries (harsh, and rough over a Discord screenshare). They're retuned to a calmer, higher-legibility set that reads the same at a glance but is easier on the eyes. Trust-rank colours are separate: they live in the Rank column (VRChat's codes) and don't feed the row colour. UI-only; Discord embed colours are unchanged.
+
+### Fixed
+
+- **Moderation logs and report data no longer silently vanish when VRChat's API is flaky.** The moderation embed dereferenced the target user in several unguarded spots (title, image, join date, pronouns, status), so whenever the API failed to fully resolve a user — rate-limited, private profile, or a transient error — the whole embed threw and the moderation event never posted (and neither did its report links). This was the inconsistent "some of the report data won't appear." Every user field is now null-guarded and falls back to the audit entry's own IDs, so the log and the pre-filled report links always post with whatever data is available (missing fields are simply omitted, with a note). Same hardening for a null actor.
+- **Outstanding-moderation re-ping actually works now.** The feature that reminds a moderator when they log a ban/kick/removal without a reason (tags or description) had never been wired into the run loop — it simply never fired — and its "outstanding" test was inverted (`!tags || description`), so even when reachable it flagged fully-logged actions and missed un-logged ones. Fixed both (now `no tags AND no description`, and it skips redacted and ban-bundled auto-kicks), plus a dead date-loop it shared with the mod-summary scheduler. **A message a moderator posts in the moderation thread now counts as a valid reason**: the first such message is captured as the entry's description, so the re-ping clears. (Requires an "Outstanding Moderation" channel to be configured and the relevant *Ping on outstanding…* toggles enabled.)
+- **Bans no longer show up as standalone kicks.** When you ban a user who's in an instance, VRChat auto-issues an instance-kick alongside the ban; Scarlet bundles that kick under the ban instead of logging it separately. A long-standing inverted date comparison (going back to the legacy builds) made the “most recent prior action” resolve to a user's *oldest* action, so for anyone with any moderation history the co-occurring ban was missed and its auto-kick was posted as a normal kick. Fixed the comparison; the same field also drove the embed's “Most recent” line, which was showing the oldest action rather than the newest.
+- **Headless: the multiple-data-folder prompt can no longer hang a service.** When Scarlet finds more than one data folder and there's no interactive console, it no longer opens a blocking read on stdin — it logs the folders and deterministically loads the first, so a headless bot never stalls at startup.
+
+### Notes
+
+- Trust rank is inferred from VRChat account tags, which VRChat only populates fully for some users — treat the Rank column as a strong hint, not a guarantee.
+
 ## 0.4.19
 
 The largest maintenance release in a while: keeps Scarlet working against VRChat's current API, **restores the avatar images on moderation messages**, makes settings and moderation state **crash-safe to write**, adds a **verified-user notification**, and lands a large batch of reliability, correctness, and security fixes from a full codebase audit. Stays on stable VRChat API **1.21.0** (the newest nightly adds nothing Scarlet uses).

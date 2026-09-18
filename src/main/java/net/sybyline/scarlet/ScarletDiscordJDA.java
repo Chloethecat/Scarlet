@@ -2216,6 +2216,22 @@ public class ScarletDiscordJDA implements ScarletDiscord
             return;
         if (!Objects.equals(event.getGuild().getId(), this.guildSf))
             return;
+        // A moderator posting context in a moderation thread counts as a valid log: capture the first
+        // such message as the entry's reason so the outstanding-moderation re-ping treats it as logged.
+        if (event.getChannelType().isThread() && !event.getAuthor().isBot())
+        {
+            String moderationAuditId = this.moderationThreadSf2auditId.get(event.getChannel().getId());
+            if (moderationAuditId != null)
+            {
+                ScarletData.AuditEntryMetadata em = this.scarlet.data.auditEntryMetadata(moderationAuditId);
+                if (em != null && !em.hasTags() && !em.hasDescription())
+                {
+                    String content = event.getMessage().getContentDisplay();
+                    if (content != null && !content.trim().isEmpty())
+                        this.scarlet.data.auditEntryMetadata_setDescription(moderationAuditId, MiscUtils.maybeEllipsis(1024, content.trim()));
+                }
+            }
+        }
         GuildMessageChannel channel = event.getGuildChannel();
         if (Duration.between(channel.getTimeCreated(), OffsetDateTime.now(ZoneOffset.UTC)).compareTo(TICKET_TOOL_AUTO_RESPONSE_MAX_CHANNEL_AGE) > 0)
             return;
@@ -2600,8 +2616,14 @@ public class ScarletDiscordJDA implements ScarletDiscord
             net.sybyline.scarlet.Debug.emit(debugEventSummary("MODERATION", entryMeta, GroupAuditType.of(entryMeta.entry.getEventType()) != null ? GroupAuditType.of(entryMeta.entry.getEventType()).title : null));
         this.condEmit(entryMeta, (channelSf, guild, channel) ->
         {
+            // The VRChat API does not always resolve the target user (rate limits, private profiles,
+            // transient failures). Fall back to the audit entry's target id so the log and report links
+            // still post instead of throwing and dropping the whole moderation event.
+            String targetId = target != null ? target.getId() : entryMeta.entry.getTargetId();
+            String targetName = target != null ? target.getDisplayName() : (targetId != null ? targetId : "Unknown user");
+            if (targetId != null)
             {
-                OffsetDateTime targetJoined = this.scarlet.eventListener.getJoinedOrNull(target.getId());
+                OffsetDateTime targetJoined = this.scarlet.eventListener.getJoinedOrNull(targetId);
                 if (targetJoined != null)
                 {
                     entryMeta.setAuxData("targetJoined", targetJoined.toEpochSecond());
@@ -2622,7 +2644,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
                     entryMeta.threadSnowflake = parentEntryMeta.threadSnowflake;
                     Message message = threadChannel
                         .sendMessageEmbeds(this.embed(entryMeta, true)
-                            .setTitle(MarkdownSanitizer.escape(target.getDisplayName()), "https://vrchat.com/home/user/"+target.getId())
+                            .setTitle(MarkdownSanitizer.escape(targetName), targetId != null ? "https://vrchat.com/home/user/"+targetId : null)
                             .build())
                         .setMessageReference(parentEntryMeta.messageSnowflake)
                         .failOnInvalidReply(false)
@@ -2633,19 +2655,30 @@ public class ScarletDiscordJDA implements ScarletDiscord
             }
             
             EmbedBuilder embed = this.embed(entryMeta, true)
-                .setTitle(MarkdownSanitizer.escape(target.getDisplayName()), "https://vrchat.com/home/user/"+target.getId())
-                .setImage(this.scarlet.vrc.getUserImageUrl(target.getId()))
+                .setTitle(MarkdownSanitizer.escape(targetName), targetId != null ? "https://vrchat.com/home/user/"+targetId : null)
             ;
+            if (targetId != null)
+                embed.setImage(this.scarlet.vrc.getUserImageUrl(targetId));
             
             List<LimitedUserGroups> lugs = this.scarlet.vrc.snapshot(entryMeta);
             
             if (target != null)
             {
-                String epochJoined = Long.toUnsignedString(target.getDateJoined().toEpochDay() * 86400L);
-                embed.addField("Account age", "<t:"+epochJoined+":D> (<t:"+epochJoined+":R>)", false);
-                embed.addField("Age verification", "`"+target.getAgeVerificationStatus()+"`", false);
-                embed.addField("Pronouns", "`"+MarkdownSanitizer.escape(target.getPronouns())+"`", false);
-                embed.addField("Status description", "`"+MarkdownSanitizer.escape(target.getStatusDescription())+"`", false);
+                if (target.getDateJoined() != null)
+                {
+                    String epochJoined = Long.toUnsignedString(target.getDateJoined().toEpochDay() * 86400L);
+                    embed.addField("Account age", "<t:"+epochJoined+":D> (<t:"+epochJoined+":R>)", false);
+                }
+                if (target.getAgeVerificationStatus() != null)
+                    embed.addField("Age verification", "`"+target.getAgeVerificationStatus()+"`", false);
+                if (target.getPronouns() != null && !target.getPronouns().trim().isEmpty())
+                    embed.addField("Pronouns", "`"+MarkdownSanitizer.escape(target.getPronouns())+"`", false);
+                if (target.getStatusDescription() != null && !target.getStatusDescription().trim().isEmpty())
+                    embed.addField("Status description", "`"+MarkdownSanitizer.escape(target.getStatusDescription())+"`", false);
+            }
+            else
+            {
+                embed.addField("Note", "VRChat did not return full profile data for this user; some fields are omitted.", false);
             }
             if (history != null)
                 embed.addField("History", history, false);
@@ -2666,14 +2699,25 @@ public class ScarletDiscordJDA implements ScarletDiscord
             if (entryMeta.hasAuxActor())
                 embed.addField("Action taken through automation/assistance", "", false);
             
+            // Pre-filled VRChat T&S report links for the account-level content types that have no
+            // in-instance spawn event to hang a link off of (a profile picture / user icon). Sticker,
+            // emoji and print reports are surfaced on their own spawn embeds. A human files the report.
+            if (Features.VRCHAT_REPORTS_ENABLED && targetId != null)
+            {
+                String reportEmail = this.requestingEmail.get(), tid = targetId;
+                embed.addField("Report profile picture", MarkdownUtil.maskedLink("link", VRChatHelpDeskURLs.newModerationRequest_account_profile(reportEmail, tid, "Profile", null)), true);
+                embed.addField("Report user icon", MarkdownUtil.maskedLink("link", VRChatHelpDeskURLs.newModerationRequest_account_user_icon(reportEmail, tid, "User Icon", null)), true);
+            }
+            
             Message message = channel
                 .sendMessageEmbeds(embed.build())
                 .complete();
             
-            this.scarlet.exec.execute(() -> this.emitUserModeration_thread(scarlet, entryMeta, actor.getId(), message));
+            this.scarlet.exec.execute(() -> this.emitUserModeration_thread(scarlet, entryMeta, actor != null ? actor.getId() : entryMeta.entry.getActorId(), message));
             
             return message;
         });
+        if (target != null)
         switch (entryMeta.entry.getEventType())
         {
         case "group.instance.kick":
@@ -2684,6 +2728,19 @@ public class ScarletDiscordJDA implements ScarletDiscord
         }
         this.scarlet.mobile.notifyModeration(entryMeta, actor, target);
     }
+    // Maps a moderation thread's snowflake to its audit entry id, so a moderator's message in the
+    // thread can be captured as that entry's reason (making it count as a logged moderation). Bounded
+    // LRU keyed by recency: only recent moderations matter for the outstanding re-ping, and the map is
+    // repopulated as new moderations are posted, so it need not survive restarts.
+    private final Map<String, String> moderationThreadSf2auditId = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<String, String>(1024, 0.75f, true)
+    {
+        private static final long serialVersionUID = 1L;
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, String> eldest)
+        {
+            return this.size() > 5000;
+        }
+    });
     ThreadChannel emitUserModeration_thread(Scarlet scarlet, ScarletData.AuditEntryMetadata entryMeta, String actorId, Message message)
     {
         ThreadChannel threadChannel = message.getStartedThread();
@@ -2707,6 +2764,7 @@ public class ScarletDiscordJDA implements ScarletDiscord
         }
         
         entryMeta.threadSnowflake = threadChannel.getId();
+        this.moderationThreadSf2auditId.put(threadChannel.getId(), entryMeta.entry.getId());
         scarlet.data.auditEntryMetadata(entryMeta.entry.getId(), entryMeta);
         
         ThreadChannel threadChannel0 = threadChannel;
@@ -2865,46 +2923,68 @@ public class ScarletDiscordJDA implements ScarletDiscord
         {
             this.emitAuxWh(entryMeta, embed.setImage(worldImageUrl)::build, IncomingWebhookClient::sendMessageEmbeds);
         });
-        if (this.vrchatClient_launchOnInstanceCreate.get())
+        this.launchClientIntoInstanceIfEnabled(location);
+    }
+
+    // Dedup guard shared by the audit-driven path (emitInstanceCreate) and the fast
+    // group-instance detection path (Scarlet.maybeFastDetectNewInstance), so a newly
+    // created instance is only cold-booted into once even when both paths observe it.
+    private final java.util.Map<String, Long> recentlyLaunchedLocations = new java.util.concurrent.ConcurrentHashMap<>();
+    static final long RELAUNCH_SUPPRESS_MILLIS = 5L * 60L * 1000L;
+
+    @Override
+    public boolean isLaunchOnInstanceCreateEnabled()
+    {
+        return this.vrchatClient_launchOnInstanceCreate.get();
+    }
+
+    @Override
+    public void launchClientIntoInstanceIfEnabled(String location)
+    {
+        if (location == null || !this.vrchatClient_launchOnInstanceCreate.get())
+            return;
+        long now = System.currentTimeMillis();
+        Long prev = this.recentlyLaunchedLocations.put(location, now);
+        this.recentlyLaunchedLocations.values().removeIf(t -> now - t.longValue() > RELAUNCH_SUPPRESS_MILLIS);
+        if (prev != null && now - prev.longValue() < RELAUNCH_SUPPRESS_MILLIS)
+            return; // already cold-booted into this instance very recently
+        try
         {
+            // Resolve the instance's short/secure name so non-public (group,
+            // friends, private) instances deep-link correctly \u2014 without it
+            // VRChat opens to the error world instead of the new instance.
+            String shortName = null;
             try
             {
-                // Resolve the instance's short/secure name so non-public (group,
-                // friends, private) instances deep-link correctly — without it
-                // VRChat opens to the error world instead of the new instance.
-                String shortName = null;
-                try
+                Location locModel = Location.of(location);
+                if (locModel != null && locModel.world != null && locModel.instance != null)
                 {
-                    Location locModel = Location.of(location);
-                    if (locModel != null && locModel.world != null && locModel.instance != null)
+                    // The dedicated /shortName endpoint generates the secure join token the
+                    // client uses on a manual join; restricted (group+/age-gated) instances
+                    // are rejected into the error world with only the plain shortName.
+                    shortName = this.scarlet.vrc.getInstanceSecureName(locModel.world, locModel.instance);
+                    if (shortName == null)
                     {
-                        // The dedicated /shortName endpoint generates the secure join token the
-                        // client uses on a manual join; restricted (group+/age-gated) instances
-                        // are rejected into the error world with only the plain shortName.
-                        shortName = this.scarlet.vrc.getInstanceSecureName(locModel.world, locModel.instance);
-                        if (shortName == null)
+                        io.github.vrchatapi.model.Instance inst = this.scarlet.vrc.getInstance(locModel.world, locModel.instance);
+                        if (inst != null)
                         {
-                            io.github.vrchatapi.model.Instance inst = this.scarlet.vrc.getInstance(locModel.world, locModel.instance);
-                            if (inst != null)
-                            {
-                                if (inst.getSecureName() != null && !inst.getSecureName().trim().isEmpty())
-                                    shortName = inst.getSecureName();
-                                else if (inst.getShortName() != null && !inst.getShortName().trim().isEmpty())
-                                    shortName = inst.getShortName();
-                            }
+                            if (inst.getSecureName() != null && !inst.getSecureName().trim().isEmpty())
+                                shortName = inst.getSecureName();
+                            else if (inst.getShortName() != null && !inst.getShortName().trim().isEmpty())
+                                shortName = inst.getShortName();
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    LOG.warn("Could not resolve instance secure name for auto-launch of {}: {}", location, ex.getMessage());
-                }
-                VrcLaunch.launch(this.scarlet.vrc.currentUserId, location, shortName, VrcLaunch.LaunchMode.DESKTOP);
             }
             catch (Exception ex)
             {
-                LOG.error("Exception auto-launching VRChat", ex);
+                LOG.warn("Could not resolve instance secure name for auto-launch of {}: {}", location, ex.getMessage());
             }
+            VrcLaunch.launch(this.scarlet.vrc.currentUserId, location, shortName, VrcLaunch.LaunchMode.DESKTOP);
+        }
+        catch (Exception ex)
+        {
+            LOG.error("Exception auto-launching VRChat", ex);
         }
     }
 
@@ -3814,7 +3894,11 @@ public class ScarletDiscordJDA implements ScarletDiscord
                 String displayName = entryMeta != null && entryMeta.hasAuxActor() ? entryMeta.auxActorDisplayName : entry.getActorDisplayName();
                 if (displayName != null)
                     displayNames.put(actorId, displayName);
-                if (entryMeta != null && (!entryMeta.hasTags() || entryMeta.hasDescription()))
+                if (entryMeta != null
+                 && !entryMeta.hasTags()
+                 && !entryMeta.hasDescription()
+                 && !entryMeta.entryRedacted
+                 && !entryMeta.hasParentEvent())
                     map.computeIfAbsent(actorId, $ -> new ArrayList<>()).add(entryMeta);
             }
             

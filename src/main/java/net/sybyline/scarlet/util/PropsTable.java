@@ -366,6 +366,18 @@ public class PropsTable<E> extends JTable
             {
                 this.setFont(overrideFont);
             }
+            // A value may carry its own cell colour (e.g. VRChat trust rank): honour it
+            // for this cell only, ahead of the row-level advisory colour, so it never
+            // affects other columns. Selection colour still wins.
+            if (!this.gtcrc_selected && value instanceof HasForegroundColor)
+            {
+                Color own = ((HasForegroundColor)value).foregroundColor();
+                if (own != null)
+                {
+                    this.setForeground(own);
+                    return;
+                }
+            }
             Color overrideForegroundColor = PropsTable.this.getPropsTableExt().getOverrideForegroundColor(PropsTable.this.getPropsDataModel().entries.get(this.gtcrc_row), this.getForeground());
             if (overrideForegroundColor != null)
             {

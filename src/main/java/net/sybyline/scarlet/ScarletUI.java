@@ -125,6 +125,7 @@ import net.sybyline.scarlet.util.HttpURLInputStream;
 import net.sybyline.scarlet.util.I18n;
 import net.sybyline.scarlet.util.MiscUtils;
 import net.sybyline.scarlet.util.PropsTable;
+import net.sybyline.scarlet.util.TrustRank;
 import net.sybyline.scarlet.util.VrcIds;
 import net.sybyline.scarlet.util.VrcWeb;
 import net.sybyline.scarlet.util.VrchatApiVersionChecker;
@@ -241,6 +242,7 @@ public class ScarletUI implements IScarletUI
             player.left = null;
             player.setBaseAdvisory(advisory, text_color, priority);
             player.ageVerificationStatus = user == null ? null : user.getAgeVerificationStatus();
+            player.trustRank = user == null ? TrustRank.UNKNOWN : TrustRank.of(user.getTags());
             player.avatarInfo = this.scarlet.eventListener.clientLocation_userDisplayName2avatarBundleInfo.get(name);
             player.pronouns = user == null ? null : user.getPronouns();
             player.pronounsFlagged = this.scarlet.eventListener.getShowSuspiciousPronounAdvisory() && PronounValidator.isFlagged(player.pronouns);
@@ -262,6 +264,7 @@ public class ScarletUI implements IScarletUI
             player.acctdays = period;
             player.setBaseAdvisory(advisory, text_color, priority);
             player.ageVerificationStatus = user == null ? null : user.getAgeVerificationStatus();
+            player.trustRank = user == null ? TrustRank.UNKNOWN : TrustRank.of(user.getTags());
             player.avatarInfo = this.scarlet.eventListener.clientLocation_userDisplayName2avatarBundleInfo.get(name);
             player.pronouns = user == null ? null : user.getPronouns();
             player.pronounsFlagged = this.scarlet.eventListener.getShowSuspiciousPronounAdvisory() && PronounValidator.isFlagged(player.pronouns);
@@ -617,6 +620,7 @@ public class ScarletUI implements IScarletUI
         int basePriority = Integer.MIN_VALUE + 1;
         int avatarPriority = Integer.MIN_VALUE + 1;
         AgeVerificationStatus ageVerificationStatus;
+        TrustRank trustRank;
         String pronouns;
         boolean pronounsFlagged;
 
@@ -697,6 +701,7 @@ public class ScarletUI implements IScarletUI
             this.propstable.addProperty(I18n.tr("ui.left"), false, true, LocalDateTime.class, $ -> $.left);
             this.propstable.addProperty(I18n.tr("ui.advisory"), false, true, String.class, $ -> $.advisory);
             this.propstable.addProperty(I18n.tr("ui.agever"), "18+", false, true, AgeVerificationStatus.class, $ -> $.ageVerificationStatus);
+            this.propstable.addProperty(I18n.tr("ui.trustRank"), "Rank", false, true, TrustRank.class, $ -> $.trustRank);
             this.propstable.addProperty(I18n.tr("ui.profile"), true, true, Action.class, $ -> $.profile);
             this.propstable.addProperty(I18n.tr("ui.copyId"), true, true, Action.class, $ -> $.copy);
             this.propstable.addProperty("Ban", I18n.tr("ui.colBan"), true, true, Action.class, $ -> $.ban);
@@ -804,7 +809,7 @@ public class ScarletUI implements IScarletUI
                     if (element.text_color != null)
                         return element.text_color;
                     if (element.pronounsFlagged)
-                        return new Color(255, 190, 60);
+                        return new Color(235, 190, 80);
                     return super.getOverrideForegroundColor(element, prev);
                 }
             });
@@ -3912,7 +3917,7 @@ public class ScarletUI implements IScarletUI
 
         { "Instance Enforcement",
           "enforce_instances_18_plus", "enforce_instances_worlds", "enforce_instances_world_list",
-          "vrchat_client_launch_on_instance_create" },
+          "vrchat_client_launch_on_instance_create", "instance_follow_fast_poll_seconds" },
 
         { "Moderation",
           "audit_polling_interval", "timed_bans_enabled", "moderation_log_lookback_days",
@@ -3922,6 +3927,7 @@ public class ScarletUI implements IScarletUI
           "advisory_show_watched_users", "advisory_show_watched_groups", "advisory_show_watched_avatars",
           "advisory_show_new_players", "advisory_show_mixed_character_names", "advisory_show_votes_to_kick",
           "advisory_show_suspicious_pronouns",
+          "advisory_flag_nuisance_rank", "advisory_flag_visitor_rank",
           "advisory_translate_endpoint", "advisory_translate_api_key", "advisory_translate_now", "advisory_restore" },
 
         { "Text-to-Speech",
@@ -3929,7 +3935,8 @@ public class ScarletUI implements IScarletUI
           "tts_announce_watched_users", "tts_announce_watched_groups", "tts_announce_watched_avatars",
           "tts_announce_new_players", "tts_announce_mixed_character_names", "tts_announce_players_newer_than_days",
           "tts_announce_votes_to_kick",
-          "tts_flag_suspicious_pronouns", "tts_announce_suspicious_pronouns" },
+          "tts_flag_suspicious_pronouns", "tts_announce_suspicious_pronouns",
+          "tts_announce_nuisance_rank", "tts_announce_visitor_rank" },
 
         { "Desktop Notifications",
           "notify_desktop_enabled",

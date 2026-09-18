@@ -225,7 +225,11 @@ public interface ScarletDiscord extends Closeable
             for (ScarletData.AuditEntryMetadata auditEntryMeta : auditEntryMetas)
             {
                 boolean isRecent = prevR.isBefore(auditEntryMeta.entry.getCreatedAt());
-                if (auditEntryMeta.entry.getCreatedAt().isBefore(mostRecent.entry.getCreatedAt()))
+                // mostRecent must be the NEWEST prior entry: the "Most recent" embed field and the
+                // reactive-kick-from-ban detection both need the latest action (the ban that VRChat
+                // auto-kicked alongside). Using isBefore here selected the OLDEST, so for anyone with
+                // prior history the co-occurring ban was missed and its auto-kick was logged as a kick.
+                if (auditEntryMeta.entry.getCreatedAt().isAfter(mostRecent.entry.getCreatedAt()))
                 {
                     mostRecent = auditEntryMeta;
                 }
@@ -319,6 +323,15 @@ public interface ScarletDiscord extends Closeable
     }
 
     public void emitInstanceCreate(Scarlet scarlet, ScarletData.AuditEntryMetadata entryMeta, String location);
+    /** @return whether the follow-into-new-instance client auto-launch is enabled. */
+    public default boolean isLaunchOnInstanceCreateEnabled()
+    {
+        return false;
+    }
+    /** Cold-launch the VRChat client into {@code location} when the auto-launch feature is on; deduplicated so the same instance is only launched into once. */
+    public default void launchClientIntoInstanceIfEnabled(String location)
+    {
+    }
     public default void processInstanceCreate(Scarlet scarlet, ScarletData.AuditEntryMetadata entryMeta)
     {
         this.emitInstanceCreate(scarlet, entryMeta, entryMeta.entry.getTargetId());

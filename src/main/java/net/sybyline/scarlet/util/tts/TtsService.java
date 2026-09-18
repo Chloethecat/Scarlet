@@ -34,6 +34,8 @@ public class TtsService implements Closeable
 {
     private static final String MIXED_CHARACTER_ALERT_RESOURCE = "/tts/mixed-character-alert.wav";
     private static final String MIXED_CHARACTER_ALERT_FILE = "mixed-character-alert.wav";
+    private static final String NUISANCE_ALERT_RESOURCE = "/tts/bl_sfx_siren_chirp.wav";
+    private static final String NUISANCE_ALERT_FILE = "bl_sfx_siren_chirp.wav";
 
     public TtsService(File dir, ScarletEventListener eventListener, ScarletDiscord discord)
     {
@@ -47,9 +49,15 @@ public class TtsService implements Closeable
         this.eventListener = eventListener;
         this.discord = discord;
         this.parentComponent = parentComponent;
-        this.mixedCharacterAlertWav = extractBundledAudio(dir,
+        // Bundled alert sounds live in the JAR; extract them to a scratch temp dir
+        // (never the user data folder) purely so the external audio player has a path.
+        File sfxDir = new File(System.getProperty("java.io.tmpdir", "."), "scarlet-sfx");
+        this.mixedCharacterAlertWav = extractBundledAudio(sfxDir,
             MIXED_CHARACTER_ALERT_RESOURCE,
             MIXED_CHARACTER_ALERT_FILE);
+        this.nuisanceAlertWav = extractBundledAudio(sfxDir,
+            NUISANCE_ALERT_RESOURCE,
+            NUISANCE_ALERT_FILE);
         Scarlet.LOG.info("TTS service initialized with provider: {}", this.provider.getClass().getSimpleName());
     }
 
@@ -58,6 +66,7 @@ public class TtsService implements Closeable
     final ScarletDiscord discord;
     final Component parentComponent;
     final File mixedCharacterAlertWav;
+    final File nuisanceAlertWav;
 
     /**
      * Single-threaded executor that serialises all audio playback.
@@ -157,6 +166,7 @@ public class TtsService implements Closeable
             File out = new File(dir, fileName);
             Files.createDirectories(out.toPath().getParent());
             Files.copy(in, out.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            out.deleteOnExit();
             Scarlet.LOG.info("Extracted bundled TTS audio resource: {} -> {}", resourcePath, out);
             return out;
         }
@@ -206,7 +216,18 @@ public class TtsService implements Closeable
             I18n.tr("adv.ttsMixedCharAlert"));
     }
 
+    /** Plays the bundled nuisance-rank alarm tone, then speaks {@code text}. */
+    public CompletableFuture<Void> submitNuisanceJoinAlert(String marker, String text)
+    {
+        return this.submitAlertThenSpeak(marker, this.nuisanceAlertWav, text);
+    }
+
     private CompletableFuture<Void> submitAlertThenSpeak(String marker, String text)
+    {
+        return this.submitAlertThenSpeak(marker, this.mixedCharacterAlertWav, text);
+    }
+
+    private CompletableFuture<Void> submitAlertThenSpeak(String marker, File alertWav, String text)
     {
         if (this.paused)
         {
@@ -216,7 +237,7 @@ public class TtsService implements Closeable
         CompletableFuture<Path> speech = this.synthesize(marker, text);
         return CompletableFuture.runAsync(() ->
         {
-            this.playPreparedAudio(marker, this.mixedCharacterAlertWav);
+            this.playPreparedAudio(marker, alertWav);
             try
             {
                 Path path = speech.get();
