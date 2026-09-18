@@ -20,6 +20,10 @@ When a member passes age verification and Scarlet auto-invites them to the VRCha
 
 It fires once, reliably, for both the verified-role path and the self-link path, and is controlled by a new setting (**on by default**) that you can turn off without a rebuild. It never interferes with the invite itself.
 
+## New — idle-instance auto-close
+
+An opt-in setting (`auto_close_bot_instance_minutes`, default off) closes the bot's *own* VRChat instance once everyone else has left and a timer elapses — for hosts who forget to close up or step away. It uses Scarlet's live in-instance presence rather than the group-instance API, so an active instance is never mistaken for empty: the timer resets while anyone else is present, re-checks the roster at expiry before acting, stops on its own if a host or moderator closes the instance first, and only ever touches the instance the bot is in.
+
 ## Data durability — stop losing settings and moderation state on a crash
 
 `settings.json` already had crash-safe writes (fsync + recover-from-backup). **That protection now covers almost every other data file:**
@@ -70,6 +74,9 @@ Each of these now writes through the fsync + temp-then-atomic-rename path instea
 - **Locating VRChat from the Windows registry** no longer throws `StringIndexOutOfBounds` on an empty value; it reports a clean "couldn't locate VRChat" instead.
 - **An unset `PATH`** no longer NPEs a static initializer (which cascaded into installer / toast / pkexec detection).
 - **Linux TTS-package handling:** the terminal fallback uses `xterm -e sh -c …` (the bare form silently failed); Solus and Clear Linux are detected correctly (the checks were using `test -f` on directories); and the package-search / command-check subprocesses run with a timeout and are cleaned up, so a locked package database can't hang the thread.
+
+- **Multiple-data-folder picker** — when more than one data folder holds a saved config, Scarlet now asks which to load at startup instead of silently adopting one (with headless/CLI fallback); the scan also covers a bare `~/Scarlet` from older layouts. `SCARLET_HOME` still overrides everything.
+- **Linux TTS** — removed the unreliable **Mimic** and **Festival** engines (Festival mis-parsed an error message into ~22 bogus voices; a Mimic-3 binary rejected the flags Scarlet sends), leaving Flite / Pico / eSpeak(-NG). Each Flite-family engine is now probed once at startup, so no listed Linux voice can fail to speak.
 
 ## Smaller fixes
 

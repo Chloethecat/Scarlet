@@ -55,10 +55,8 @@ public class LinuxCommandTtsProvider implements TtsProvider
 
     public static boolean hasAnyEngineInstalled()
     {
-        return isCommandAvailable("mimic")
-            || isCommandAvailable("flite")
+        return isCommandAvailable("flite")
             || isCommandAvailable("pico2wave")
-            || isCommandAvailable("text2wave")
             || isCommandAvailable("espeak-ng")
             || isCommandAvailable("espeak");
     }
@@ -80,10 +78,8 @@ public class LinuxCommandTtsProvider implements TtsProvider
 
     private void initEngines() throws IOException, InterruptedException
     {
-        this.registerFliteFamily("mimic", "Mimic", true);
         this.registerFliteFamily("flite", "Flite", false);
         this.registerPico();
-        this.registerFestival();
         this.registerEspeak("espeak-ng", "eSpeak NG");
         this.registerEspeak("espeak", "eSpeak");
     }
@@ -109,19 +105,41 @@ public class LinuxCommandTtsProvider implements TtsProvider
         List<String> voiceNames = listFliteVoices(command);
         if (voiceNames.isEmpty())
             voiceNames.add("default");
+        // A flite-family binary can be installed but non-functional \u2014 e.g. a Mimic 3 binary
+        // rejects the Mimic 1 flags Scarlet passes and exits non-zero. Probe once so a broken engine
+        // drops out of the voice list instead of offering voices that always fail at speak-time.
+        if (!engineProducesAudio(engine, voiceNames.get(0)))
+        {
+            LOG.info("Linux TTS engine {} is installed but produced no audio on a probe; skipping its voices.", displayName);
+            return;
+        }
         this.addVoices(engine, voiceNames);
     }
 
-    private void registerFestival() throws IOException, InterruptedException
+    /**
+     * Synthesizes a tiny sample to a temp file to verify an engine actually works before its voices
+     * are offered. Returns true only on a zero exit code and a non-empty output file. Best-effort;
+     * any failure counts as "doesn't work" so the engine is skipped rather than trusted.
+     */
+    private boolean engineProducesAudio(Engine engine, String voiceName)
     {
-        if (!isCommandAvailable("text2wave"))
-            return;
-
-        Engine engine = new FestivalEngine();
-        List<String> voiceNames = listFestivalVoices();
-        if (voiceNames.isEmpty())
-            voiceNames.add("default");
-        this.addVoices(engine, voiceNames);
+        Path wav = null, log = null;
+        try
+        {
+            wav = Files.createTempFile("scarlet-tts-probe", ".wav");
+            log = Files.createTempFile("scarlet-tts-probe", ".log");
+            int code = engine.synthesize(new Voice(engine.key + "/" + voiceName, voiceName, engine), "test", wav, log.toFile(), 1.0F, 1.0F);
+            return code == 0 && Files.size(wav) > 0L;
+        }
+        catch (Exception ex)
+        {
+            return false;
+        }
+        finally
+        {
+            try { if (wav != null) Files.deleteIfExists(wav); } catch (Exception ignore) {}
+            try { if (log != null) Files.deleteIfExists(log); } catch (Exception ignore) {}
+        }
     }
 
     private void registerPico()
@@ -253,29 +271,6 @@ public class LinuxCommandTtsProvider implements TtsProvider
                 String lower = part.toLowerCase();
                 if ("voices".equals(lower) || "available".equals(lower) || "voice".equals(lower)
                     || "list".equals(lower) || "internal".equals(lower))
-                    continue;
-                if (isSimpleVoiceToken(part))
-                    voices.add(part);
-            }
-        }
-        return unique(voices);
-    }
-
-    private static List<String> listFestivalVoices() throws IOException, InterruptedException
-    {
-        List<String> out = runAndCollect(Arrays.asList("sh", "-c", "printf '%s\\n' '(voice.list)' | festival --pipe 2>/dev/null"));
-        List<String> voices = new ArrayList<>();
-        for (String line : out)
-        {
-            line = line.replace('(', ' ').replace(')', ' ').replace('\'', ' ').replace('"', ' ');
-            String[] parts = line.split("\\s+");
-            for (String part : parts)
-            {
-                part = part.trim();
-                if (part.isEmpty())
-                    continue;
-                String lower = part.toLowerCase();
-                if ("festival>".equals(lower) || "nil".equals(lower) || "voice.list".equals(lower))
                     continue;
                 if (isSimpleVoiceToken(part))
                     voices.add(part);
@@ -453,38 +448,6 @@ public class LinuxCommandTtsProvider implements TtsProvider
                 .redirectOutput(outLog)
                 .redirectError(outLog)
                 .start();
-            return waitFor(process, outLog);
-        }
-    }
-
-    private static final class FestivalEngine extends Engine
-    {
-        FestivalEngine()
-        {
-            super("festival", "Festival", "text2wave");
-        }
-
-        @Override
-        int synthesize(Voice voice, String text, Path outWav, File outLog, float volume, float speed) throws Exception
-        {
-            List<String> cmd = new ArrayList<>();
-            cmd.add(this.command);
-            cmd.add("-o");
-            cmd.add(outWav.toString());
-            if (!"default".equals(voice.voiceName))
-            {
-                cmd.add("-eval");
-                cmd.add("(voice_" + voice.voiceName + ")");
-            }
-            Process process = new ProcessBuilder(cmd)
-                .redirectOutput(outLog)
-                .redirectError(outLog)
-                .start();
-            try (Writer writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8))
-            {
-                writer.write(text);
-                writer.write('\n');
-            }
             return waitFor(process, outLog);
         }
     }

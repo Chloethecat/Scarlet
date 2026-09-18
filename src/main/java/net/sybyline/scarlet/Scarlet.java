@@ -361,11 +361,18 @@ public class Scarlet implements Closeable
         // static initialisation.
         if (!explicitHome && !settingsFileUsable(dir0))
         {
-            File discovered = findUsableDataDir(dir0, localappdata, xdgDataHome);
-            if (discovered != null && !discovered.equals(dir0))
+            java.util.List<File> discovered = findAllUsableDataDirs(dir0, localappdata, xdgDataHome);
+            if (!discovered.isEmpty())
             {
-                System.out.println("[Scarlet] Data folder " + dir0 + " has no usable settings.json; using discovered config at " + discovered);
-                dir0 = discovered;
+                // One usable folder: adopt it silently. More than one: ask the user which to load,
+                // so a config split across data locations isn't silently resolved to the wrong one.
+                File chosen = discovered.size() == 1 ? discovered.get(0) : chooseDataDir(discovered);
+                if (chosen != null && !chosen.equals(dir0))
+                {
+                    System.out.println("[Scarlet] Data folder " + dir0 + " has no usable settings.json; using config at " + chosen
+                        + (discovered.size() > 1 ? " (chosen from " + discovered.size() + " candidates)" : ""));
+                    dir0 = chosen;
+                }
             }
         }
 
@@ -446,6 +453,8 @@ public class Scarlet implements Closeable
                 candidates.add(new File(user_home, "AppData/Local/"+g+"/"+NAME));
                 candidates.add(new File(user_home, "."+g+"/"+NAME));
             }
+            // Bare ~/Scarlet, used by older SCARLET_HOME layouts / early builds.
+            candidates.add(new File(user_home, NAME));
             try
             {
                 if (MavenDepsLoader.jarPath() != null)
@@ -461,6 +470,121 @@ public class Scarlet implements Closeable
             System.err.println("[Scarlet] Data folder discovery failed: " + ex);
         }
         return null;
+    }
+
+    /**
+     * Like {@link #findUsableDataDir}, but returns EVERY known data location holding a usable
+     * settings.json (deduplicated by canonical path, excluding {@code primary}). Used to offer the
+     * user a choice when a config is split across more than one data folder.
+     */
+    static java.util.List<File> findAllUsableDataDirs(File primary, String localappdata, String xdgDataHome)
+    {
+        java.util.LinkedHashMap<String, File> byPath = new java.util.LinkedHashMap<>();
+        try
+        {
+            String primaryKey = canonicalKey(primary);
+            java.util.List<File> candidates = new java.util.ArrayList<>();
+            for (String g : new String[] { GROUP })
+            {
+                if (xdgDataHome != null && !xdgDataHome.trim().isEmpty())
+                    candidates.add(new File(xdgDataHome, g+"/"+NAME));
+                candidates.add(new File(user_home, ".local/share/"+g+"/"+NAME));
+                if (localappdata != null)
+                    candidates.add(new File(localappdata, g+"/"+NAME));
+                candidates.add(new File(user_home, "AppData/Local/"+g+"/"+NAME));
+                candidates.add(new File(user_home, "."+g+"/"+NAME));
+            }
+            // Bare ~/Scarlet, used by older SCARLET_HOME layouts / early builds.
+            candidates.add(new File(user_home, NAME));
+            try
+            {
+                if (MavenDepsLoader.jarPath() != null)
+                    candidates.add(MavenDepsLoader.jarPath().getParent().toFile());
+            }
+            catch (Exception ignore) {}
+            for (File c : candidates)
+            {
+                if (c == null || !settingsFileUsable(c))
+                    continue;
+                String key = canonicalKey(c);
+                if (key.equals(primaryKey))
+                    continue;
+                byPath.putIfAbsent(key, c);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.err.println("[Scarlet] Data folder discovery failed: " + ex);
+        }
+        return new java.util.ArrayList<>(byPath.values());
+    }
+
+    static String canonicalKey(File f)
+    {
+        if (f == null)
+            return "";
+        try { return f.getCanonicalPath(); } catch (Exception ex) { return f.getAbsolutePath(); }
+    }
+
+    /**
+     * Prompts the user to pick which data folder to load when more than one usable config exists.
+     * Falls back to the first candidate when headless / no input / cancelled, so startup never blocks.
+     */
+    static File chooseDataDir(java.util.List<File> candidates)
+    {
+        if (candidates == null || candidates.isEmpty())
+            return null;
+        if (candidates.size() == 1)
+            return candidates.get(0);
+        String message = "Scarlet found more than one data folder with a saved config.\n\nChoose which one to load:";
+        try
+        {
+            if (!GraphicsEnvironment.isHeadless())
+            {
+                String[] labels = new String[candidates.size()];
+                for (int i = 0; i < labels.length; i++)
+                    labels[i] = candidates.get(i).getAbsolutePath();
+                Object sel = JOptionPane.showInputDialog(
+                    null,
+                    Swing.dialogMessage(message),
+                    "Multiple Scarlet data folders",
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    labels,
+                    labels[0]);
+                if (sel != null)
+                    for (File c : candidates)
+                        if (c.getAbsolutePath().equals(sel))
+                            return c;
+                return candidates.get(0);
+            }
+            StringBuilder sb = new StringBuilder(message.replace("\n", System.lineSeparator())).append(System.lineSeparator());
+            for (int i = 0; i < candidates.size(); i++)
+                sb.append("  ").append(i + 1).append(") ").append(candidates.get(i).getAbsolutePath()).append(System.lineSeparator());
+            Console console = System.console();
+            String answer = null;
+            if (console != null)
+                answer = console.readLine("%sSelect [1-%d] (default 1): ", sb.toString(), candidates.size());
+            else
+            {
+                System.out.print(sb + "Select [1-" + candidates.size() + "] (default 1): ");
+                @SuppressWarnings("resource")
+                Scanner scanner = new Scanner(System.in);
+                if (scanner.hasNextLine())
+                    answer = scanner.nextLine();
+            }
+            if (answer != null)
+            {
+                int idx = Integer.parseInt(answer.trim()) - 1;
+                if (idx >= 0 && idx < candidates.size())
+                    return candidates.get(idx);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.err.println("[Scarlet] Data folder chooser failed, defaulting to first: " + ex);
+        }
+        return candidates.get(0);
     }
 
     static String legacyGroupName()

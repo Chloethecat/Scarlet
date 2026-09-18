@@ -9,6 +9,8 @@ The largest maintenance release in a while: keeps Scarlet working against VRChat
 
 - **Verified-user notifications.** When a member passes age verification and is auto-invited to the group, Scarlet now posts an "Age Verification Complete" entry to the staff action-log channel — including the member's real VRChat age-verification status — **and** a confirmation in the member's ticket. Fires once for both the verified-role and self-link paths; new setting, on by default. (Previously, members who earned the verified role directly got no acknowledgement.)
 - **Crash-safe data persistence across the board.** The fsync + temp-then-atomic-rename + recover-from-backup protection `settings.json` already had now covers timed bans / pending actions, the staff and secret-staff lists, the Discord↔VRChat link map and per-user / per-audit metadata, the event calendar, the report template, and Discord permissions. A hard crash or power loss mid-write no longer drops a ban timer, staff roster, or moderation link; a truncated file is recovered from a backup on next load. (Verified by hard-crashing the machine mid-edit.)
+- **Idle-instance auto-close.** New opt-in setting (`auto_close_bot_instance_minutes`, default off) that closes the bot's *own* VRChat instance once everyone else has left and a timer elapses — for hosts who forget to close up or step away. Uses Scarlet's live in-instance presence (not the group-instance API), resets while anyone else is present, re-checks at expiry, stops if a host/mod closes the instance first, and only ever touches the instance the bot is in.
+- **Multiple-data-folder picker.** When more than one data folder holds a saved config, Scarlet asks at startup which to load instead of silently adopting one (headless/CLI fallback included); the scan also covers a bare `~/Scarlet` from older layouts. `SCARLET_HOME` still overrides discovery entirely.
 
 ### Changed
 
@@ -25,6 +27,7 @@ The largest maintenance release in a while: keeps Scarlet working against VRChat
 - **Security / hardening:** NAT64 (`64:ff9b::/96`) addresses rejected by the public-URL guard; log-export path-traversal hardening (anchored match + canonical containment); size-capped streaming reads of untrusted URLs.
 - **Platform / process:** IPC socket stops at EOF (Unix-domain commands match again); empty Windows VRChat registry value no longer throws; unset `PATH` no longer NPEs a static initializer; Linux TTS installer terminal fallback (`xterm -e sh -c`), Solus/Clear Linux detection (`test -d`), and timeouts on the package-search/command-check subprocesses.
 - **Smaller:** avatar-search author provider (stray literal, URL-encoding, malformed-row skipping); `volatile` User-Agent statics; iOS-vs-PC avatar-rating copy-paste; tag-rename autocomplete refresh; report-tag separators; GitHub release parsing; `:`-less location parsing; UTF-8 JSON read; an option helper honoring `required`.
+- **Linux TTS:** dropped the unreliable **Mimic** and **Festival** engines — Festival was registering an error message as ~22 bogus "voices", and Mimic (a Mimic-3 binary) failed on the Mimic-1 flags Scarlet sends; both only ever fell back to a working voice anyway. The Linux voice list is now Flite / Pico / eSpeak(-NG) only, and each Flite-family engine is probed at startup so a broken binary never offers a voice that can't speak.
 
 ### Notes
 
