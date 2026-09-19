@@ -140,7 +140,8 @@ public class ScarletDiscordUI
                 .setRequired(false)
                 .setPlaceholder("Type a name or description - leave blank to browse")
                 .build()))
-            .build());
+            .build())
+            .queue();
     }
 
     @ModalSub("tag-search")
@@ -284,7 +285,8 @@ public class ScarletDiscordUI
         event.replyModal(Modal.create("vrchat-user-edit-manager-notes:"+vrcTargetId, "Manager notes for "+MarkdownSanitizer.escape(sc.getDisplayName()))
                 .addComponents(Label.of("Notes", TextInput.create("manager-notes:"+vrcTargetId, TextInputStyle.PARAGRAPH)
                     .setValue(value).build()))
-            .build());
+            .build())
+            .queue();
     }
 
     @ModalSub("vrchat-user-edit-manager-notes")
@@ -1290,20 +1292,47 @@ public class ScarletDiscordUI
         );
         
         
+        // VRChat now steers general reports to in-app reporting and restricts the Help Desk form to
+        // appeals and evidence-backed reports (help.vrchat.com Trust & Safety Reporting Changes), and it
+        // requires signing in. So the primary output is a plain-text, copy-paste report block a signed-in
+        // moderator pastes into the in-app report (or the Help Desk for appeals/evidence). The pre-filled
+        // Help Desk link is kept but labelled for its now-narrow use.
+        String plainReport = reportHtmlToPlain(params.format(this.discord.appendTemplateFooter.get()));
+        String reportedWho = reportSubject != null ? reportSubject : (targetDisplayName != null ? targetDisplayName : targetUserId);
+        String block = MiscUtils.maybeEllipsis(1500, plainReport);
+        StringBuilder content = new StringBuilder();
+        content.append("**Copy-paste report for ").append(reportedWho == null ? "user" : MarkdownSanitizer.escape(reportedWho)).append("**\n");
+        content.append("Paste this into VRChat's **in-app** report (now the primary method). The Help Desk only accepts **appeals** and **evidence-backed** reports \u2014 general reports filed there are auto-closed.\n");
+        content.append("```\n").append(block).append("\n```");
+        if (eventUserId == null)
+            content.append("\n\u26a0 The Help Desk link below autofills the requesting id of the **audit actor, not you** \u2014 associate your ids with `/associate-ids`.");
+
         hook.sendMessageEmbeds(new EmbedBuilder()
-                .setTitle("Simple Help desk link")
-                .appendDescription("[Open new VRChat User Moderation Request](<")
+                .setTitle("Help Desk link (appeals / evidence-backed reports only)")
+                .appendDescription("[Open VRChat moderation request](<")
                 .appendDescription(link)
-                .appendDescription(">)")
-            .build(), new EmbedBuilder()
-                .setTitle("Templated link")
-                .appendDescription("[Templated link](<")
-                .appendDescription(params.url(requestingEmail, requestingUserId, reportSubject, this.discord.appendTemplateFooter.get()))
-                .appendDescription(">)")
+                .appendDescription(">)\nFor a general report, use in-app reporting and paste the block above.")
             .build())
-            .setContent(eventUserId != null ? null : "## WARNING\nThis link autofills the requesting user id of the **audit actor, not necessarily you**\nAssociate your Discord and VRChat ids with `/associate-ids`.\n\n")
+            .setContent(MiscUtils.maybeEllipsis(2000, content.toString()))
             .setEphemeral(true)
             .queue();
+    }
+
+    /** Converts the report template's HTML (as built for the Zendesk description field) into clean
+     *  plain text a moderator can paste into VRChat's in-app report or Help Desk form. */
+    static String reportHtmlToPlain(String html)
+    {
+        if (html == null)
+            return "";
+        String out = html;
+        out = out.replaceAll("(?i)<br\\s*/?>", "\n");
+        out = out.replaceAll("(?i)<li>", "- ");
+        out = out.replaceAll("(?i)</li>", "\n");
+        out = out.replaceAll("(?i)</?ul>", "");
+        out = out.replaceAll("<[^>]+>", "");
+        out = out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+        out = out.replaceAll("\n{3,}", "\n\n");
+        return out.trim();
     }
 
     @ButtonClk("view-potential-avatar-matches")

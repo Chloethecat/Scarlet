@@ -62,3 +62,43 @@ Moderation embeds now include **Report profile picture** and **Report user icon*
 The bug behind "sometimes the report data doesn't appear, and it's inconsistent." The moderation embed assumed VRChat always returns the full target user, and dereferenced it in several places (name, image, join date, pronouns, status). When the API didn't — rate limits, a private profile, or a transient failure, the same flakiness behind the avatar/trust-rank gaps — the embed threw and the entire moderation log (with its report links) silently failed to post. Which user it hit was luck of the draw, so it looked random across people.
 
 Now every user field is null-guarded and falls back to the audit entry's own IDs. The log and the pre-filled report links always post; any field VRChat didn't return is just omitted (with a short note), instead of taking the whole message down with it.
+
+## "Edit tags" and "Manager notes" buttons work again
+
+Both button handlers built their modal but never `.queue()`d it, so the modal was never sent and Discord showed "interaction failed" (the repeated "did not acknowledge" warnings in the logs). This was universal — not ARM-specific — and both now queue the reply.
+
+## Report flow updated for VRChat's reporting changes
+
+VRChat moved general reporting **in-app** and restricted the Help Desk form to **appeals and evidence-backed reports** (and it now requires signing in), so the old pre-filled Help Desk links mostly hit a login wall or get auto-closed. The `vrchat-report` button now outputs a **plain-text, copy-paste report block** — target, actor, reason, internal tags, group/audit IDs — for a signed-in moderator to paste straight into VRChat's in-app report. The Help Desk link is kept but labelled for its now-narrow use (appeals / evidence). Still no automated reporting under the bot account — a human files it.
+
+## ARM/glibc Discord voice (DAVE) groundwork
+
+On a glibc arm64 box (e.g. a Raspberry Pi running the desktop jar) there's no native `libdave-jvm`, so Discord voice falls back to the JNA `DAudioDaveSession` path — which mis-handshakes and makes the bot thrash (join/leave) in voice. That fallback (only ever active on such platforms) is now heavily logged at each DAVE handshake step, with the MLS-init failure surfaced at error level, so the next ARM voice attempt pinpoints exactly where E2EE dies. Also fixed two casts the original author had flagged `// smells sus`. Termux/Android arm64 users should keep using **`-android.jar`**, which bundles the proper arm64 `libdave-jvm`.
+
+
+## Quieter logs: down or dead avatar-search providers
+
+If an avatar-search provider goes down — its domain stops resolving, it starts returning HTTP 403/404, it times out, or it refuses the connection — Scarlet used to retry it on **every single search** and dump a full stack trace each time. One permanently-dead host could bury the console on its own.
+
+Now a failing provider logs **one** warning when it first goes down and **one** when Scarlet gives up on it, then goes quiet. The stack traces for these expected network failures are gone from the normal logs (TRACE only). Every failure now backs off, and the backoff **doubles** with each repeat up to a ~2-hour cap, so a dead provider is retried a couple of times an hour at most instead of constantly. When a provider starts responding again it's picked back up automatically, with a one-line "recovered" note.
+
+Two concrete results from the reported logs:
+
+- **`vrcx.avtr.zip` is removed.** Its hostname no longer resolves, so it could only ever fail — it was the biggest single source of the spam.
+- **avtrDB is removed entirely** — text search *and* reverse-image — because its search API now requires an API key. Text search continues on the five remaining providers, and **"search by picture" was rebuilt without avtrDB** (next section) rather than left broken.
+
+## Reverse-image search, rebuilt dependency-free
+
+avtrDB was the only provider that answered "here's an avatar image, which avatar is it?" directly, and it now needs an API key. Rather than wire in another third party, "search by picture" is rebuilt from pieces Scarlet already trusts:
+
+1. The avatar image's file ID is resolved to its **owner** via VRChat's own (authenticated) file API.
+2. Each remaining provider is queried **by author** — the standard VRCX `authorId` lookup.
+3. Only the avatar whose image references that same file ID is kept.
+
+No API key, no new dependency, and nothing that can quietly die on you the way `avtr.zip` did. Author-lookup state is tracked **separately** from text search, so if a provider doesn't support author lookup it backs off quietly for that mode without touching its text search. If the owner can't be resolved or no provider indexes them, it returns no match and falls back to name search — exactly as before.
+
+## Built on the VRCX avatar-search ecosystem
+
+Worth stating plainly: Scarlet's whole avatar-search feature — text search, author lookup, and the rebuilt reverse-image — runs on the **VRCX avatar-search provider format**. That's the query convention ([VRCX](https://github.com/vrcx-team/VRCX)'s `?search=` / `?authorId=` / `?fileId=` shape, `n=5000`, and the tolerant JSON response) and the same community provider ecosystem VRCX popularised (nekosunevr, VRCDB, WorldBalancer, paw, KitsuneDB). The reverse-image rebuild also follows VRCX's own documented behaviour: try a direct file-ID lookup, otherwise resolve the owner and match by author.
+
+To be precise about it: Scarlet **implements** that format — it doesn't bundle, fork, or import VRCX's code. Building to the shared convention is what keeps Scarlet interoperable with the same providers VRCX uses, and lets it benefit from (and contribute back to) that ecosystem.

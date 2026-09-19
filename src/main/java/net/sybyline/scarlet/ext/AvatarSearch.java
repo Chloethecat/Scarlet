@@ -37,29 +37,33 @@ public interface AvatarSearch
     Logger LOG = LoggerFactory.getLogger("Scarlet/AvatarSearch");
     long RATE_LIMIT_BACKOFF_MILLIS = TimeUnit.MINUTES.toMillis(5L),
          TIMEOUT_BACKOFF_MILLIS = TimeUnit.SECONDS.toMillis(45L),
+         SERVER_ERROR_BACKOFF_MILLIS = TimeUnit.MINUTES.toMillis(5L),
+         GONE_BACKOFF_MILLIS = TimeUnit.MINUTES.toMillis(30L),
+         MAX_BACKOFF_MILLIS = TimeUnit.HOURS.toMillis(2L),
          ERROR_LOG_THROTTLE_MILLIS = TimeUnit.MINUTES.toMillis(1L);
+    // After this many consecutive failures a provider is treated as long-term
+    // down: we stop warning and only whisper at TRACE, so a dead or gated host
+    // can't flood the console for the rest of the session.
+    int QUIET_AFTER_STREAK = 3;
     Map<String, Long> providerBlockedUntil = new ConcurrentHashMap<>(),
                       providerLastLog = new ConcurrentHashMap<>();
+    Map<String, Integer> providerFailStreak = new ConcurrentHashMap<>();
     // Canonical VRCX-format search endpoints as published by the providers
     // themselves (cross-checked against ShayBox/VRC-LOG's supported-provider
     // list). Inclusion bar: the provider must honor avatar removal/blacklist
     // requests from creators. All of these are queried politely: cached per
     // search, identified by User-Agent, and backed off on 429/timeout/garbage.
     String
-        URL_ROOT_AVTRDB = AvatarSearch_AvtrDB.API_ROOT+"/avatar/search/vrcx",
         URL_ROOT_NEKOSUNEVR = AvatarSearch_VRCDS.SEARCH_ROOT+"/vrcx_search",
         URL_ROOT_VRCDB = "https://vrcx.vrcdb.com/avatars/Avatar/VRCX",
         URL_ROOT_WORLDBALANCER = "https://avatarwbvrcxsearch.worldbalancer.com/vrcx_search",
-        URL_ROOT_AVTR_ZIP = "https://vrcx.avtr.zip",
         URL_ROOT_PAW = "https://paw-api.amelia.fun/vrcx_search",
         URL_ROOT_KITSUNEDB = "https://avtr.fumikoecho.net/api/integrations/avatars/vrcx",
         URL_ROOTS[] =
         {
-            URL_ROOT_AVTRDB,
             URL_ROOT_NEKOSUNEVR,
             URL_ROOT_VRCDB,
             URL_ROOT_WORLDBALANCER,
-            URL_ROOT_AVTR_ZIP,
             URL_ROOT_PAW,
             URL_ROOT_KITSUNEDB,
         };
@@ -83,12 +87,31 @@ public interface AvatarSearch
 
     static void logProviderFailure(String urlRoot, String message, Throwable throwable)
     {
+        int streak = providerFailStreak.getOrDefault(urlRoot, Integer.valueOf(0)).intValue();
         long now = System.currentTimeMillis();
         Long last = providerLastLog.put(urlRoot, Long.valueOf(now));
-        if (last == null || now - last.longValue() >= ERROR_LOG_THROTTLE_MILLIS)
+        boolean throttleElapsed = last == null || now - last.longValue() >= ERROR_LOG_THROTTLE_MILLIS;
+        // One warning when a provider first goes down, one more when we give up
+        // on it, then silence. Stack traces for these expected network failures
+        // (DNS, HTTP 4xx/5xx, timeouts) never reach WARN or DEBUG -- they say
+        // nothing the message doesn't -- and only go to TRACE for deep debugging.
+        if (streak <= 1)
             LOG.warn("Avatar search provider unavailable: {} ({})", urlRoot, message);
-        else
-            LOG.debug("Avatar search provider unavailable: {} ({})", urlRoot, message, throwable);
+        else if (streak == QUIET_AFTER_STREAK)
+            LOG.warn("Avatar search provider still unavailable after {} tries; backing off and suppressing further warnings: {} ({})", Integer.valueOf(streak), urlRoot, message);
+        else if (throttleElapsed)
+            LOG.debug("Avatar search provider still unavailable: {} ({})", urlRoot, message);
+        LOG.trace("Avatar search provider failure detail: {}", urlRoot, throwable);
+    }
+
+    /** Clears a provider's failure state after a successful query, noting recovery if it had been given up on. */
+    static void providerSucceeded(String urlRoot)
+    {
+        Integer streak = providerFailStreak.remove(urlRoot);
+        providerBlockedUntil.remove(urlRoot);
+        providerLastLog.remove(urlRoot);
+        if (streak != null && streak.intValue() >= QUIET_AFTER_STREAK)
+            LOG.info("Avatar search provider recovered: {}", urlRoot);
     }
 
     /** Forgets all provider backoffs, e.g. after the user deliberately changes the provider list. */
@@ -96,6 +119,7 @@ public interface AvatarSearch
     {
         providerBlockedUntil.clear();
         providerLastLog.clear();
+        providerFailStreak.clear();
     }
 
     /**
@@ -116,26 +140,66 @@ public interface AvatarSearch
 
     static void blockProvider(String urlRoot, long millis, String message, Throwable throwable)
     {
-        providerBlockedUntil.put(urlRoot, Long.valueOf(System.currentTimeMillis() + millis));
-        logProviderFailure(urlRoot, message+"; backing off for "+TimeUnit.MILLISECONDS.toSeconds(millis)+"s", throwable);
+        int streak = providerFailStreak.getOrDefault(urlRoot, Integer.valueOf(1)).intValue();
+        // Escalate: each repeat doubles the wait (capped), so a persistently dead
+        // or gated endpoint is retried every couple of hours, not every search.
+        int shift = Math.min(streak - 1, 6);
+        long backoff = Math.min(MAX_BACKOFF_MILLIS, millis << shift);
+        providerBlockedUntil.put(urlRoot, Long.valueOf(System.currentTimeMillis() + backoff));
+        logProviderFailure(urlRoot, message+"; backing off for "+TimeUnit.MILLISECONDS.toSeconds(backoff)+"s", throwable);
     }
 
     static void handleSearchFailure(String urlRoot, String search, Exception ex)
     {
+        providerFailStreak.merge(urlRoot, Integer.valueOf(1), Integer::sum);
         String message = ex.getMessage();
         if (message == null)
             message = ex.getClass().getSimpleName();
-        if (message.contains("429"))
+        String lower = message.toLowerCase();
+        int httpCode = httpResponseCode(message);
+        if (message.contains("429") || httpCode == 429)
             blockProvider(urlRoot, RATE_LIMIT_BACKOFF_MILLIS, "rate limited while searching `"+search+"`", ex);
-        else if (ex instanceof SocketTimeoutException || message.toLowerCase().contains("timed out"))
+        else if (ex instanceof SocketTimeoutException || lower.contains("timed out"))
             blockProvider(urlRoot, TIMEOUT_BACKOFF_MILLIS, "timed out while searching `"+search+"`", ex);
         else if (ex instanceof com.google.gson.JsonSyntaxException || message.contains("Expected BEGIN"))
             // The provider is up but not speaking the expected format (endpoint moved,
             // maintenance page, HTML error, ...). Retrying immediately can't succeed and
             // just spams the log with parse stack traces, so back off like a rate limit.
             blockProvider(urlRoot, RATE_LIMIT_BACKOFF_MILLIS, "returned a malformed response while searching `"+search+"`", ex);
+        else if (httpCode >= 400 && httpCode < 500)
+            // Client error: 403 gated (needs a key), 404/410 gone, 401 unauthorized.
+            // None of these fix themselves on retry, so back off hard.
+            blockProvider(urlRoot, GONE_BACKOFF_MILLIS, "returned HTTP "+httpCode+" while searching `"+search+"`", ex);
+        else if (httpCode >= 500)
+            blockProvider(urlRoot, SERVER_ERROR_BACKOFF_MILLIS, "returned HTTP "+httpCode+" while searching `"+search+"`", ex);
+        else if (ex instanceof java.net.UnknownHostException
+              || lower.contains("no route")
+              || lower.contains("refused")
+              || lower.contains("name or service not known")
+              || lower.contains("connection reset"))
+            // DNS or connection failure: the host is down or gone. Back off long.
+            blockProvider(urlRoot, GONE_BACKOFF_MILLIS, "unreachable while searching `"+search+"` ("+message+")", ex);
         else
-            logProviderFailure(urlRoot, "search failed for `"+search+"`: "+message, ex);
+            // Anything else unrecognised: still back off briefly so it can't spin.
+            blockProvider(urlRoot, TIMEOUT_BACKOFF_MILLIS, "search failed for `"+search+"`: "+message, ex);
+    }
+
+    /** Parses the numeric code out of "Server returned HTTP response code: NNN for URL: ..." (0 if absent). */
+    static int httpResponseCode(String message)
+    {
+        if (message == null)
+            return 0;
+        int i = message.indexOf("response code: ");
+        if (i < 0)
+            return 0;
+        i += "response code: ".length();
+        int code = 0, n = message.length();
+        while (i < n && message.charAt(i) >= '0' && message.charAt(i) <= '9')
+        {
+            code = code * 10 + (message.charAt(i) - '0');
+            i++;
+        }
+        return code;
     }
 
     class VrcxAvatar
@@ -534,6 +598,7 @@ public interface AvatarSearch
         try (HttpURLInputStream in = HttpURLInputStream.get(urlRoot + "?n=" + Integer.toUnsignedString(n) + "&search=" + URLs.encode(search), ExtendedUserAgent.init_conn))
         {
             VrcxAvatar[] results = parseVrcxResults(in.readAsJson(null, null, JsonElement.class));
+            providerSucceeded(urlRoot);
             LOG.debug("{} returned {} result(s) for `{}`", urlRoot, results.length, search);
             return results;
         }
@@ -684,9 +749,13 @@ public interface AvatarSearch
 
     interface ByImage
     {
+        // avtrDB was the only by-image (reverse-image / "search by picture")
+        // provider, and it now requires an API key, so it was removed. No
+        // replacement is wired yet; by-image search returns no results until one
+        // is. Left as an explicit empty list rather than deleted so a new
+        // provider can be dropped straight in.
         String BY_IMAGE_URL_ROOTS[] =
         {
-            URL_ROOT_AVTRDB,
         };
         static VrcxAvatar[] vrcxSearch0ByImage(String urlRoot, int n, String imageFileId)
         {
@@ -696,7 +765,9 @@ public interface AvatarSearch
                 return null;
             try (HttpURLInputStream in = HttpURLInputStream.get(urlRoot + "?n=" + Integer.toUnsignedString(n) + "&fileId=" + imageFileId, ExtendedUserAgent.init_conn))
             {
-                return parseVrcxResults(in.readAsJson(null, null, JsonElement.class));
+                VrcxAvatar[] results = parseVrcxResults(in.readAsJson(null, null, JsonElement.class));
+                providerSucceeded(urlRoot);
+                return results;
             }
             catch (Exception ex)
             {
@@ -776,6 +847,103 @@ public interface AvatarSearch
                 .flatMap(Arrays::stream)
                 .filter(Objects::nonNull)
             ;
+        }
+
+        // --- Dependency-free reverse-image lookup (no keyed provider needed) ---
+        // avtrDB used to answer ?fileId= directly; with it gone, "search by
+        // picture" is reconstructed from parts we already trust: the caller
+        // resolves the image's owner via VRChat's authenticated file API, we query
+        // each provider by author (the standard VRCX ?authorId= mode), and keep
+        // only the avatars whose own image references the same file id.
+
+        /** Providers queried for author lookups; same endpoints as text search. */
+        String[] AUTHOR_LOOKUP_URL_ROOTS = URL_ROOTS;
+
+        /** Backoff/state key for a provider's author-lookup mode, kept separate from its text-search state so one can't block the other. */
+        static String authorStateKey(String urlRoot)
+        {
+            return urlRoot + "#author";
+        }
+
+        static VrcxAvatar[] vrcxSearch0ByAuthor(String urlRoot, int n, String authorId)
+        {
+            if (!urlRoot.startsWith("http://") && !urlRoot.startsWith("https://"))
+                return VrcxAvatar.NONE;
+            String stateKey = authorStateKey(urlRoot);
+            if (!providerAvailable(stateKey))
+                return null;
+            try (HttpURLInputStream in = HttpURLInputStream.get(urlRoot + "?n=" + Integer.toUnsignedString(n) + "&authorId=" + URLs.encode(authorId), ExtendedUserAgent.init_conn))
+            {
+                VrcxAvatar[] results = parseVrcxResults(in.readAsJson(null, null, JsonElement.class));
+                providerSucceeded(stateKey);
+                return results;
+            }
+            catch (Exception ex)
+            {
+                handleSearchFailure(stateKey, authorId, ex);
+                return null;
+            }
+        }
+
+        static VrcxAvatar[] vrcxSearchCachedByAuthor(String urlRoot, int n, String authorId)
+        {
+            String cacheRoot = authorStateKey(urlRoot);
+            Map<String, VrcxAvatar[]> urlCache;
+            synchronized (VrcxAvatar.searchCacheByUrlRootByImage) {
+                urlCache = VrcxAvatar.searchCacheByUrlRootByImage.computeIfAbsent(cacheRoot, r -> LRUMap.ofSynchronized());
+            }
+            synchronized (urlCache) {
+                String key = cacheKey(n, authorId);
+                VrcxAvatar[] cached = urlCache.get(key);
+                if (cached == null) {
+                    cached = vrcxSearch0ByAuthor(urlRoot, n, authorId);
+                    if (cached != null) {
+                        urlCache.put(key, cached);
+                    }
+                }
+                return cached;
+            }
+        }
+
+        /** Does this avatar's image or thumbnail reference the given VRChat file id? */
+        static boolean imageMatchesFileId(VrcxAvatar avatar, String imageFileId)
+        {
+            if (avatar == null || imageFileId == null)
+                return false;
+            return (avatar.imageUrl != null && avatar.imageUrl.contains(imageFileId))
+                || (avatar.thumbnailImageUrl != null && avatar.thumbnailImageUrl.contains(imageFileId));
+        }
+
+        /**
+         * The reverse-image fallback: query every provider by {@code authorId} and
+         * keep only avatars whose image references {@code imageFileId}. The author
+         * is the owner of the image file, resolved by the caller via VRChat's file
+         * API. Empty if the author is unknown or not indexed by any provider.
+         */
+        static Stream<VrcxAvatar> vrcxSearchAllByImageViaAuthor(String imageFileId, String authorId)
+        {
+            if (imageFileId == null || authorId == null || authorId.isEmpty())
+                return Stream.empty();
+            return Arrays.stream(AUTHOR_LOOKUP_URL_ROOTS)
+                .filter(Objects::nonNull)
+                .map($ -> vrcxSearchCachedByAuthor($, SEARCH_N, authorId))
+                .filter(Objects::nonNull)
+                .flatMap(Arrays::stream)
+                .filter(Objects::nonNull)
+                .filter($ -> imageMatchesFileId($, imageFileId))
+            ;
+        }
+
+        /** By-image with author fallback: native ?fileId= providers (if any) plus the author-match path. */
+        static Stream<VrcxAvatar> vrcxSearchAllByImage(String imageFileId, String authorId)
+        {
+            return Stream.concat(vrcxSearchAllByImage(imageFileId), vrcxSearchAllByImageViaAuthor(imageFileId, authorId));
+        }
+
+        /** Cached by-image with author fallback. */
+        static Stream<VrcxAvatar> vrcxSearchAllCachedByImage(String imageFileId, String authorId)
+        {
+            return Stream.concat(vrcxSearchAllCachedByImage(imageFileId), vrcxSearchAllByImageViaAuthor(imageFileId, authorId));
         }
     }
 

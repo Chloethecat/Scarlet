@@ -659,11 +659,15 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
             // Candidates: image-based lookups first (most precise), then name matches.
             LinkedHashSet<String> candidates = new LinkedHashSet<>();
             if (imageFileId != null)
-                AvatarSearch.ByImage.vrcxSearchAllCachedByImage(imageFileId)
+            {
+                ModelFile imageFile = this.scarlet.vrc.getModelFile(imageFileId);
+                String imageAuthorId = imageFile == null ? null : imageFile.getOwnerId();
+                AvatarSearch.ByImage.vrcxSearchAllCachedByImage(imageFileId, imageAuthorId)
                     .filter(Objects::nonNull)
                     .map(AvatarSearch.VrcxAvatar::id)
                     .filter(Objects::nonNull)
                     .forEach(candidates::add);
+            }
             String[] nameCandidates = this.searchAvatar(avatarDisplayName);
             Collections.addAll(candidates, nameCandidates);
             if (!candidates.isEmpty()
@@ -844,7 +848,11 @@ public class ScarletEventListener implements ScarletVRChatLogs.Listener
             // worn avatar, so matching it would find the wrong avatar or nothing.
             String uafid = this.wornAvatarImageFileId(user);
             if (uafid != null)
-                potentialIds = AvatarSearch.ByImage.vrcxSearchAllByImage(uafid).map(AvatarSearch.VrcxAvatar::id).toArray(String[]::new);
+            {
+                ModelFile uaFile = this.scarlet.vrc.getModelFile(uafid);
+                String uaAuthorId = uaFile == null ? null : uaFile.getOwnerId();
+                potentialIds = AvatarSearch.ByImage.vrcxSearchAllByImage(uafid, uaAuthorId).map(AvatarSearch.VrcxAvatar::id).toArray(String[]::new);
+            }
         }
         
         if (potentialIds == null || potentialIds.length == 0)

@@ -8,6 +8,9 @@ import java.util.stream.Stream;
 
 import com.sun.jna.ptr.LongByReference;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import net.dv8tion.jda.api.audio.dave.DaveProtocolCallbacks;
 import net.dv8tion.jda.api.audio.dave.DaveSession;
 import net.sybyline.scarlet.server.discord.dave.Dave;
@@ -20,6 +23,11 @@ import net.sybyline.scarlet.server.discord.dave.DaveWelcomeResult;
 
 public class DAudioDaveSession implements DaveSession, Closeable
 {
+
+    // This session only runs as the JNA fallback (a platform without a native libdave-jvm, e.g.
+    // glibc arm64). It is otherwise unexercised, so it is heavily logged: when Discord voice thrashes
+    // (join/leave loop) on such a platform, these lines pinpoint which DAVE handshake step failed.
+    private static final Logger LOG = LoggerFactory.getLogger(DAudioDaveSession.class);
 
     public DAudioDaveSession(DaveProtocolCallbacks callbacks, long userId, long channelId)
     {
@@ -172,6 +180,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onSelectProtocolAck(protocolVersion={}) ch={} self={}", protocolVersion, this.channelId, this.selfUserId);
         this.handleDaveProtocolInit((short)protocolVersion);
     }
 
@@ -180,6 +189,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onDaveProtocolPrepareTransition(transitionId={}, protocolVersion={})", transitionId, protocolVersion);
         this.prepareProtocolTransition(transitionId, (short)protocolVersion);
     }
 
@@ -188,6 +198,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onDaveProtocolExecuteTransition(transitionId={})", transitionId);
         this.executeProtocolTransition(transitionId);
     }
 
@@ -196,6 +207,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onDaveProtocolPrepareEpoch(epoch={}, protocolVersion={})", epoch, protocolVersion);
         this.handlePrepareEpoch(epoch, (short)protocolVersion);
     }
 
@@ -212,6 +224,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onMLSProposals({} bytes)", proposals == null ? 0 : proposals.remaining());
         this.session.processProposals(proposals, this.getRecognizedUserIds(), this.callbacks::sendMLSCommitWelcome);
     }
 
@@ -220,6 +233,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onMLSPrepareCommitTransition(transitionId={}, {} bytes)", transitionId, commit == null ? 0 : commit.remaining());
         try (DaveCommitResult result = this.session.processCommit(commit))
         {
             if (result.isIgnored())
@@ -228,9 +242,11 @@ public class DAudioDaveSession implements DaveSession, Closeable
             }
             else if (result.isFailed())
             {
+                LOG.warn("DAVE commit failed for transitionId={}; re-sending key package and re-initialising", transitionId);
                 this.sendInvalidCommitWelcome(transitionId);
-                // The cast immediately below smells sus...
-                this.handleDaveProtocolInit((short)transitionId);
+                // Was `(short)transitionId` (flagged "smells sus" by the author): a transition id is not
+                // a protocol version. Re-initialise at the session's actual protocol version instead.
+                this.handleDaveProtocolInit(this.session.getProtocolVersion());
             }
             else
             {
@@ -244,6 +260,7 @@ public class DAudioDaveSession implements DaveSession, Closeable
     {
         if (this.closed)
             return;
+        LOG.debug("DAVE onMLSWelcome(transitionId={}, {} bytes)", transitionId, welcome == null ? 0 : welcome.remaining());
         try (DaveWelcomeResult result = this.session.processWelcome(welcome, this.getRecognizedUserIds()))
         {
             if (result != null && result._isHandleValid())
@@ -252,9 +269,11 @@ public class DAudioDaveSession implements DaveSession, Closeable
             }
             else
             {
+                LOG.warn("DAVE welcome invalid for transitionId={}; re-sending key package and re-initialising", transitionId);
                 this.sendInvalidCommitWelcome(transitionId);
-                // The cast immediately below smells sus...
-                this.handleDaveProtocolInit((short)transitionId);
+                // Was `(short)transitionId` (flagged "smells sus"): re-initialise at the session's actual
+                // protocol version, not the transition id.
+                this.handleDaveProtocolInit(this.session.getProtocolVersion());
             }
         }
     }
@@ -283,10 +302,23 @@ public class DAudioDaveSession implements DaveSession, Closeable
     private void handlePrepareEpoch(long epoch, short protocolVersion)
     {
         if (epoch != DaveLibrary.DAVE_MLS_NEW_GROUP_EXPECTED_EPOCH)
+        {
+            LOG.debug("DAVE handlePrepareEpoch: ignoring unexpected epoch {} (expected {})", epoch, DaveLibrary.DAVE_MLS_NEW_GROUP_EXPECTED_EPOCH);
             return;
-
-        this.session.init(protocolVersion, this.channelId, Long.toUnsignedString(this.selfUserId));
-        this.session.getMarshalledKeyPackage(this.callbacks::sendMLSKeyPackage);
+        }
+        try
+        {
+            this.session.init(protocolVersion, this.channelId, Long.toUnsignedString(this.selfUserId));
+            this.session.getMarshalledKeyPackage(this.callbacks::sendMLSKeyPackage);
+            LOG.debug("DAVE handlePrepareEpoch: MLS group initialised at protocolVersion={} and key package sent", protocolVersion);
+        }
+        catch (Throwable t)
+        {
+            // On a platform where the JNA fallback misbehaves this is where the E2EE handshake dies,
+            // which Discord answers by dropping voice — hence the join/leave thrash. Surface it.
+            LOG.error("DAVE handlePrepareEpoch failed at protocolVersion={} (voice will drop/thrash): {}", protocolVersion, t.toString(), t);
+            throw t;
+        }
     }
 
     private void prepareProtocolTransition(int transitionId, short protocolVersion)
