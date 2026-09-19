@@ -118,29 +118,86 @@ public class ScarletDiscordUI
     }
 
     @ButtonClk("edit-tags")
-    public void editTags(ButtonInteractionEvent event)
+    @Ephemeral
+    public void editTags(ButtonInteractionEvent event, InteractionHook hook)
     {
         String[] parts = event.getButton().getCustomId().split(":");
         String auditEntryId = parts[1];
-        if (!this.checkAuditEntryModerationAccess(event.getMember(), event, auditEntryId))
+        if (!this.checkAuditEntryModerationAccess(event.getMember(), hook, auditEntryId))
             return;
 
-        if (this.discord.scarlet.moderationTags.getTags().isEmpty())
+        List<ScarletModerationTags.Tag> tags = this.discord.scarlet.moderationTags.getTags();
+
+        if (tags == null || tags.isEmpty())
         {
-            event.reply("No moderation tags!").setEphemeral(true).queue();
+            hook.sendMessage("No moderation tags!").setEphemeral(true).queue();
             return;
         }
 
-        // Search-then-pick: rather than dumping every tag into stacked 25-option
-        // menus (which forces multiple boxes once there are more than 25 tags), pop
-        // a search box. The submit handler renders ONE menu of just the matches, so
-        // any number of tags works and it is the same flow for everyone.
-        event.replyModal(Modal.create("tag-search:" + auditEntryId, "Search moderation tags")
-            .addComponents(Label.of("Search", TextInput.create("tag-search-query", TextInputStyle.SHORT)
-                .setRequired(false)
-                .setPlaceholder("Type a name or description - leave blank to browse")
-                .build()))
-            .build())
+        // Show the moderation tags immediately. Discord permits at most 25
+        // options per select menu and at most 5 action rows per message.
+        // Scarlet caps moderation tags at 125, so split them into up to
+        // five dropdowns instead of forcing a search modal first.
+        int total = tags.size();
+        StringSelectMenu.Builder[] builders = new StringSelectMenu.Builder[(total - 1) / 25 + 1];
+
+        for (int i = 0; i < builders.length; i++)
+        {
+            builders[i] = StringSelectMenu.create(
+                (i == 0 ? "select-tags:" : ("select-tags-" + i + ":")) + auditEntryId
+            );
+        }
+
+        for (int i = 0; i < total; i++)
+        {
+            ScarletModerationTags.Tag tag = tags.get(i);
+            String value = tag.value,
+                   label = tag.label != null ? tag.label : tag.value,
+                   desc = tag.description;
+
+            if (desc == null || desc.isEmpty())
+                builders[i / 25].addOption(label, MiscUtils.maybeEllipsis(100, value));
+            else
+                builders[i / 25].addOption(
+                    label,
+                    MiscUtils.maybeEllipsis(100, value),
+                    MiscUtils.maybeEllipsis(50, desc)
+                );
+        }
+
+        ScarletData.AuditEntryMetadata auditEntryMeta =
+            this.discord.scarlet.data.auditEntryMetadata(auditEntryId);
+
+        for (int i = 0; i < builders.length; i++)
+        {
+            StringSelectMenu.Builder builder = builders[i];
+            builder
+                .setMinValues(0)
+                .setMaxValues(builder.getOptions().size())
+                .setPlaceholder(
+                    "Select tags (" + (i * 25 + 1) + "-" +
+                    (i * 25 + builder.getOptions().size()) + ")"
+                );
+
+            // Preselect only values present in this dropdown.
+            if (auditEntryMeta != null && auditEntryMeta.hasTags())
+            {
+                List<String> optionValues = builder.getOptions().stream()
+                    .map(SelectOption::getValue)
+                    .collect(Collectors.toList());
+
+                List<String> defaults = auditEntryMeta.entryTags.stream()
+                    .filter(optionValues::contains)
+                    .collect(Collectors.toList());
+
+                builder.setDefaultValues(defaults);
+            }
+        }
+
+        hook.sendMessageComponents(Arrays.asList(
+                MiscUtils.map(builders, ActionRow[]::new, $ -> ActionRow.of($.build()))
+            ))
+            .setEphemeral(true)
             .queue();
     }
 
