@@ -174,6 +174,14 @@ public class ScarletVRChat implements Closeable
                             return null;
                         }
                         JsonElement je = prevJE.read(in);
+
+                        // VRChat currently returns presence.currentAvatarTags as a JSON array,
+                        // while vrchatapi-java 1.21.0 still models CurrentUserPresence.currentAvatarTags
+                        // as a String. Normalize only that nested presence field before the generated
+                        // model adapter sees it. The top-level CurrentUser.currentAvatarTags field is
+                        // already List<String> and must remain untouched.
+                        normalizeCurrentUserPresenceAvatarTags(type, je);
+
                         T value;
                         try {
                             value = prevTA.fromJsonTree(je);
@@ -1386,39 +1394,70 @@ finally
         return tags.contains(adminTag.value);
     }
     /**
-     * <u><i><b>REMOVE AFTER API SDK UPDATE</b></i></u>
+     * Compatibility shim for VRChat's current auth-user payload.
+     *
+     * vrchatapi-java 1.21.0 models presence.currentAvatarTags as String, but VRChat can
+     * return that nested field as an array. Keep this normalization local to the nested
+     * presence object; CurrentUser.currentAvatarTags at the root is correctly a List<String>.
+     *
+     * <u><i><b>REMOVE AFTER THE API SDK MODELS THE PRESENCE FIELD AS AN ARRAY</b></i></u>
      */
-
-@Deprecated
-CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
-{
-    JsonObject json = this.client.<JsonObject>execute(auth.getCurrentUserCall(null), JsonObject.class).getData(),
-               presence = json.getAsJsonObject("presence");
-
-    if (presence != null)
+    private static void normalizeCurrentUserPresenceAvatarTags(TypeToken<?> type, JsonElement element)
     {
-        JsonElement cat = presence.get("currentAvatarTags");
+        if (element == null || !element.isJsonObject())
+            return;
 
-        if (cat != null && cat.isJsonPrimitive())
+        Class<?> rawType = type.getRawType();
+        JsonObject presence = null;
+
+        // Normal CurrentUser deserialization: { ..., "presence": { "currentAvatarTags": [...] } }
+        if ("io.github.vrchatapi.model.CurrentUser".equals(rawType.getName()))
         {
-            // Convert comma-separated string → array (what Gson expects)
-            String tagsStr = cat.getAsString();
-            JsonArray tagsArray = new JsonArray();
-
-            if (tagsStr != null && !tagsStr.isEmpty())
-            {
-                for (String tag : tagsStr.split(","))
-                {
-                    tagsArray.add(tag.trim());
-                }
-            }
-
-            presence.add("currentAvatarTags", tagsArray);
+            JsonElement presenceElement = element.getAsJsonObject().get("presence");
+            if (presenceElement != null && presenceElement.isJsonObject())
+                presence = presenceElement.getAsJsonObject();
         }
+        // Defensive support in case CurrentUserPresence is ever deserialized directly.
+        else if ("io.github.vrchatapi.model.CurrentUserPresence".equals(rawType.getName()))
+        {
+            presence = element.getAsJsonObject();
+        }
+
+        normalizePresenceAvatarTagsObject(presence);
     }
 
-    return JSON.getGson().fromJson(json, CurrentUser.class);
-}
+    private static void normalizePresenceAvatarTagsObject(JsonObject presence)
+    {
+        if (presence == null)
+            return;
+
+        JsonElement tags = presence.get("currentAvatarTags");
+        if (tags == null || tags.isJsonNull() || !tags.isJsonArray())
+            return;
+
+        JsonArray array = tags.getAsJsonArray();
+        StringBuilder joined = new StringBuilder();
+        for (JsonElement tag : array)
+        {
+            if (tag == null || tag.isJsonNull() || !tag.isJsonPrimitive())
+                continue;
+            if (joined.length() > 0)
+                joined.append(',');
+            joined.append(tag.getAsString());
+        }
+
+        presence.addProperty("currentAvatarTags", joined.toString());
+        LOG.debug("Normalized VRChat presence.currentAvatarTags array for vrchatapi-java compatibility");
+    }
+
+    @Deprecated
+    CurrentUser getCurrentUser(AuthenticationApi auth) throws ApiException
+    {
+        JsonObject json = this.client.<JsonObject>execute(auth.getCurrentUserCall(null), JsonObject.class).getData();
+        JsonObject presence = json == null ? null : json.getAsJsonObject("presence");
+        normalizePresenceAvatarTagsObject(presence);
+        return JSON.getGson().fromJson(json, CurrentUser.class);
+    }
 
     public boolean logout()
     {
